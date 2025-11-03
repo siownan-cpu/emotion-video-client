@@ -36,6 +36,30 @@ const EmotionVideoCallWithWebRTC = () => {
   const socketRef = useRef(null);
   const analysisIntervalRef = useRef(null);
 
+  // CRITICAL: Effect to set local video stream whenever it changes
+  useEffect(() => {
+    console.log('Local stream effect triggered, stream:', localStream);
+    if (localStream && localVideoRef.current) {
+      console.log('Setting local video srcObject');
+      localVideoRef.current.srcObject = localStream;
+      localVideoRef.current.play()
+        .then(() => console.log('✅ Local video playing'))
+        .catch(e => console.error('❌ Local video play error:', e));
+    }
+  }, [localStream]);
+
+  // CRITICAL: Effect to set remote video stream whenever it changes
+  useEffect(() => {
+    console.log('Remote stream effect triggered, stream:', remoteStream);
+    if (remoteStream && remoteVideoRef.current) {
+      console.log('Setting remote video srcObject');
+      remoteVideoRef.current.srcObject = remoteStream;
+      remoteVideoRef.current.play()
+        .then(() => console.log('✅ Remote video playing'))
+        .catch(e => console.error('❌ Remote video play error:', e));
+    }
+  }, [remoteStream]);
+
   // STUN servers for NAT traversal (free Google STUN servers)
   const iceServers = {
     iceServers: [
@@ -48,13 +72,15 @@ const EmotionVideoCallWithWebRTC = () => {
   const connectToServer = () => {
     // Change this URL to your deployed server URL
     const serverUrl = 'http://localhost:3001'; // Change for production
+    console.log('Connecting to server:', serverUrl);
     socketRef.current = io(serverUrl);
 
     socketRef.current.on('connect', () => {
-      console.log('Connected to signaling server');
+      console.log('✅ Connected to signaling server');
     });
 
     socketRef.current.on('room-users', async (users) => {
+      console.log('Room users:', users);
       if (users.length > 0) {
         console.log('Creating offer for existing user');
         await createOffer(users[0]);
@@ -62,26 +88,26 @@ const EmotionVideoCallWithWebRTC = () => {
     });
 
     socketRef.current.on('user-joined', async (userId) => {
-      console.log('User joined:', userId);
+      console.log('✅ User joined:', userId);
     });
 
     socketRef.current.on('offer', async (data) => {
-      console.log('Received offer');
+      console.log('📨 Received offer');
       await handleOffer(data);
     });
 
     socketRef.current.on('answer', async (data) => {
-      console.log('Received answer');
+      console.log('📨 Received answer');
       await handleAnswer(data);
     });
 
     socketRef.current.on('ice-candidate', async (data) => {
-      console.log('Received ICE candidate');
+      console.log('📨 Received ICE candidate');
       await handleIceCandidate(data);
     });
 
     socketRef.current.on('user-left', () => {
-      console.log('User left');
+      console.log('❌ User left');
       handleUserLeft();
     });
 
@@ -95,24 +121,23 @@ const EmotionVideoCallWithWebRTC = () => {
     const peerConnection = new RTCPeerConnection(iceServers);
     peerConnectionRef.current = peerConnection;
 
+    console.log('Creating peer connection with:', remotePeerId);
+
     // Add local stream tracks to peer connection
     if (localStream) {
       localStream.getTracks().forEach(track => {
+        console.log('Adding track to peer connection:', track.kind);
         peerConnection.addTrack(track, localStream);
       });
     }
 
     // Handle incoming remote stream
     peerConnection.ontrack = (event) => {
-      console.log('Received remote track');
+      console.log('✅ Received remote track:', event.track.kind);
+      console.log('Remote streams:', event.streams);
+      
+      // Set remote stream
       setRemoteStream(event.streams[0]);
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = event.streams[0];
-        // Force video to play
-        remoteVideoRef.current.play().catch(e => {
-          console.error('Remote video play error:', e);
-        });
-      }
       setIsConnected(true);
       setAnalyzing(true);
       startAnalysis();
@@ -200,9 +225,6 @@ const EmotionVideoCallWithWebRTC = () => {
 
   // Handle user leaving
   const handleUserLeft = () => {
-    if (remoteVideoRef.current) {
-      remoteVideoRef.current.srcObject = null;
-    }
     setRemoteStream(null);
     setIsConnected(false);
     setAnalyzing(false);
@@ -219,56 +241,54 @@ const EmotionVideoCallWithWebRTC = () => {
     return Math.random().toString(36).substring(2, 9);
   };
 
- // Start call
-const startCall = async () => {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: true,
-      audio: true
-    });
-    
-    console.log('✅ Got stream:', stream);
-    
-    // Set local stream FIRST
-    setLocalStream(stream);
-    
-    // IMPORTANT: Use setTimeout to ensure refs are ready
-    setTimeout(() => {
-      if (localVideoRef.current && stream) {
-        console.log('Setting local video...');
-        localVideoRef.current.srcObject = stream;
-        localVideoRef.current.play().catch(e => console.error('Play error:', e));
-      } else {
-        console.error('Local video ref not ready!');
-      }
-    }, 100);
-    
-    setCallActive(true);
-    
-    // Generate room ID if not provided
-    const room = roomId || generateRoomId();
-    setCurrentRoomId(room);
-    
-    // Connect to signaling server and join room
-    connectToServer();
-    
-    // Wait for socket to connect
-    setTimeout(() => {
-      if (socketRef.current) {
-        socketRef.current.emit('join-room', room);
-      }
-    }, 500);
-    
-  } catch (error) {
-    console.error('Error accessing media devices:', error);
-    alert('Could not access camera/microphone. Please check permissions.');
-  }
-}; 
+  // Start call
+  const startCall = async () => {
+    try {
+      console.log('🎬 Starting call, requesting media...');
+      
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: 1280, height: 720 },
+        audio: true
+      });
+      
+      console.log('✅ Got media stream:', stream);
+      console.log('Video tracks:', stream.getVideoTracks());
+      console.log('Audio tracks:', stream.getAudioTracks());
+      
+      // Set local stream - this will trigger the useEffect
+      setLocalStream(stream);
+      setCallActive(true);
+      
+      // Generate room ID if not provided
+      const room = roomId || generateRoomId();
+      setCurrentRoomId(room);
+      
+      // Connect to signaling server and join room
+      connectToServer();
+      
+      // Wait a bit for socket to connect
+      setTimeout(() => {
+        if (socketRef.current) {
+          console.log('Joining room:', room);
+          socketRef.current.emit('join-room', room);
+        }
+      }, 500);
+      
+    } catch (error) {
+      console.error('❌ Error accessing media devices:', error);
+      alert('Could not access camera/microphone. Error: ' + error.message);
+    }
+  };
 
   // End call
   const endCall = () => {
+    console.log('Ending call...');
+    
     if (localStream) {
-      localStream.getTracks().forEach(track => track.stop());
+      localStream.getTracks().forEach(track => {
+        console.log('Stopping track:', track.kind);
+        track.stop();
+      });
     }
     
     if (peerConnectionRef.current) {
@@ -295,7 +315,7 @@ const startCall = async () => {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // Emotion analysis functions (same as before)
+  // Emotion analysis functions
   const analyzeVideoEmotion = (videoElement, isLocal = true) => {
     if (!videoElement || !videoElement.videoWidth) return null;
 
@@ -465,23 +485,38 @@ const startCall = async () => {
     }
   };
 
-// Effect to ensure video plays when stream is set
-useEffect(() => {
-  if (localStream && localVideoRef.current) {
-    console.log('Effect: Setting local video stream');
-    localVideoRef.current.srcObject = localStream;
-    localVideoRef.current.play().catch(e => console.error('Play error:', e));
-  }
-}, [localStream]);
+  useEffect(() => {
+    return () => {
+      endCall();
+    };
+  }, []);
 
-// Effect for remote stream
-useEffect(() => {
-  if (remoteStream && remoteVideoRef.current) {
-    console.log('Effect: Setting remote video stream');
-    remoteVideoRef.current.srcObject = remoteStream;
-    remoteVideoRef.current.play().catch(e => console.error('Play error:', e));
-  }
-}, [remoteStream]);
+  // Debug: Log video element states
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (callActive) {
+        console.log('=== VIDEO DEBUG ===');
+        if (localVideoRef.current) {
+          console.log('Local video:', {
+            hasStream: localVideoRef.current.srcObject !== null,
+            readyState: localVideoRef.current.readyState,
+            paused: localVideoRef.current.paused,
+            dimensions: `${localVideoRef.current.videoWidth}x${localVideoRef.current.videoHeight}`
+          });
+        }
+        if (remoteVideoRef.current) {
+          console.log('Remote video:', {
+            hasStream: remoteVideoRef.current.srcObject !== null,
+            readyState: remoteVideoRef.current.readyState,
+            paused: remoteVideoRef.current.paused,
+            dimensions: `${remoteVideoRef.current.videoWidth}x${remoteVideoRef.current.videoHeight}`
+          });
+        }
+      }
+    }, 3000);
+    
+    return () => clearInterval(interval);
+  }, [callActive]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-6">
@@ -558,6 +593,7 @@ useEffect(() => {
                       autoPlay
                       playsInline
                       className="w-full h-full object-cover"
+                      style={{ backgroundColor: '#000' }}
                     />
                     {!isConnected && (
                       <div className="absolute inset-0 flex items-center justify-center bg-gray-800">
@@ -591,7 +627,8 @@ useEffect(() => {
                       autoPlay
                       playsInline
                       muted
-                      className="w-full h-full object-cover scale-x-[-1]"
+                      className="w-full h-full object-cover"
+                      style={{ backgroundColor: '#000', transform: 'scaleX(-1)' }}
                     />
                   </div>
                 </div>
