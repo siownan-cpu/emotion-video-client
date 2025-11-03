@@ -224,9 +224,13 @@ const EmotionVideoCallWithWebRTC = () => {
       });
       
       setLocalStream(stream);
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
-      }
+    if (localVideoRef.current) {
+      localVideoRef.current.srcObject = stream;
+      // Force video to play
+      localVideoRef.current.play().catch(e => {
+        console.error('Local video play error:', e);
+      });
+    }
       
       setCallActive(true);
       
