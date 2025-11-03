@@ -47,7 +47,7 @@ const EmotionVideoCallWithWebRTC = () => {
   // Connect to signaling server
   const connectToServer = () => {
     // Change this URL to your deployed server URL
-    const serverUrl = 'https://emotion-video-server.onrender.com'; // Change for production
+    const serverUrl = 'http://localhost:3001'; // Change for production
     socketRef.current = io(serverUrl);
 
     socketRef.current.on('connect', () => {
@@ -108,6 +108,10 @@ const EmotionVideoCallWithWebRTC = () => {
       setRemoteStream(event.streams[0]);
       if (remoteVideoRef.current) {
         remoteVideoRef.current.srcObject = event.streams[0];
+        // Force video to play
+        remoteVideoRef.current.play().catch(e => {
+          console.error('Remote video play error:', e);
+        });
       }
       setIsConnected(true);
       setAnalyzing(true);
@@ -224,13 +228,13 @@ const EmotionVideoCallWithWebRTC = () => {
       });
       
       setLocalStream(stream);
-    if (localVideoRef.current) {
-      localVideoRef.current.srcObject = stream;
-      // Force video to play
-      localVideoRef.current.play().catch(e => {
-        console.error('Local video play error:', e);
-      });
-    }
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = stream;
+        // Force local video to play
+        localVideoRef.current.play().catch(e => {
+          console.error('Local video play error:', e);
+        });
+      }
       
       setCallActive(true);
       
