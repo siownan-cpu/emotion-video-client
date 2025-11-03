@@ -35,6 +35,7 @@ const EmotionVideoCallWithWebRTC = () => {
   const peerConnectionRef = useRef(null);
   const socketRef = useRef(null);
   const analysisIntervalRef = useRef(null);
+  const localStreamRef = useRef(null); // Store stream in ref for peer connection
 
   // CRITICAL: Effect to set local video stream whenever it changes
   useEffect(() => {
@@ -83,7 +84,8 @@ const EmotionVideoCallWithWebRTC = () => {
       console.log('Room users:', users);
       if (users.length > 0) {
         console.log('Creating offer for existing user');
-        await createOffer(users[0]);
+        // Use the ref which has the current stream
+        await createOffer(users[0], localStreamRef.current);
       }
     });
 
@@ -117,27 +119,39 @@ const EmotionVideoCallWithWebRTC = () => {
   };
 
   // Create peer connection
-  const createPeerConnection = (remotePeerId) => {
+  const createPeerConnection = (remotePeerId, stream) => {
     const peerConnection = new RTCPeerConnection(iceServers);
     peerConnectionRef.current = peerConnection;
 
     console.log('Creating peer connection with:', remotePeerId);
+    console.log('Stream to add:', stream);
 
     // Add local stream tracks to peer connection
-    if (localStream) {
-      localStream.getTracks().forEach(track => {
-        console.log('Adding track to peer connection:', track.kind);
-        peerConnection.addTrack(track, localStream);
+    if (stream) {
+      const tracks = stream.getTracks();
+      console.log('📹 Adding tracks to peer connection:', tracks.length, 'tracks');
+      tracks.forEach(track => {
+        console.log('  - Adding', track.kind, 'track:', track.label, 'enabled:', track.enabled);
+        peerConnection.addTrack(track, stream);
       });
+      console.log('✅ All tracks added to peer connection');
+    } else {
+      console.error('❌ No stream to add to peer connection!');
     }
 
     // Handle incoming remote stream
     peerConnection.ontrack = (event) => {
-      console.log('✅ Received remote track:', event.track.kind);
-      console.log('Remote streams:', event.streams);
+      console.log('🎉 ontrack event fired!');
+      console.log('  - Track kind:', event.track.kind);
+      console.log('  - Track enabled:', event.track.enabled);
+      console.log('  - Track readyState:', event.track.readyState);
+      console.log('  - Streams:', event.streams.length);
+      console.log('  - Stream tracks:', event.streams[0]?.getTracks().length);
       
       // Set remote stream
-      setRemoteStream(event.streams[0]);
+      const remoteStreamReceived = event.streams[0];
+      console.log('Setting remote stream:', remoteStreamReceived);
+      setRemoteStream(remoteStreamReceived);
       setIsConnected(true);
       setAnalyzing(true);
       startAnalysis();
@@ -167,8 +181,9 @@ const EmotionVideoCallWithWebRTC = () => {
   };
 
   // Create and send offer
-  const createOffer = async (remotePeerId) => {
-    const peerConnection = createPeerConnection(remotePeerId);
+  const createOffer = async (remotePeerId, stream) => {
+    console.log('createOffer called with stream:', stream);
+    const peerConnection = createPeerConnection(remotePeerId, stream);
     
     try {
       const offer = await peerConnection.createOffer();
@@ -178,6 +193,7 @@ const EmotionVideoCallWithWebRTC = () => {
         offer: offer,
         to: remotePeerId
       });
+      console.log('Offer sent');
     } catch (error) {
       console.error('Error creating offer:', error);
     }
@@ -185,7 +201,17 @@ const EmotionVideoCallWithWebRTC = () => {
 
   // Handle incoming offer
   const handleOffer = async (data) => {
-    const peerConnection = createPeerConnection(data.from);
+    console.log('handleOffer called');
+    // Use the ref which has the current stream
+    const stream = localStreamRef.current;
+    console.log('Using stream from ref:', stream);
+    
+    if (!stream) {
+      console.error('❌ No local stream available!');
+      return;
+    }
+    
+    const peerConnection = createPeerConnection(data.from, stream);
     
     try {
       await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
@@ -196,6 +222,7 @@ const EmotionVideoCallWithWebRTC = () => {
         answer: answer,
         to: data.from
       });
+      console.log('Answer sent');
     } catch (error) {
       console.error('Error handling offer:', error);
     }
@@ -255,6 +282,9 @@ const EmotionVideoCallWithWebRTC = () => {
       console.log('Video tracks:', stream.getVideoTracks());
       console.log('Audio tracks:', stream.getAudioTracks());
       
+      // CRITICAL: Store stream in ref for peer connection
+      localStreamRef.current = stream;
+      
       // Set local stream - this will trigger the useEffect
       setLocalStream(stream);
       setCallActive(true);
@@ -298,6 +328,9 @@ const EmotionVideoCallWithWebRTC = () => {
     if (socketRef.current) {
       socketRef.current.disconnect();
     }
+    
+    // Clear refs
+    localStreamRef.current = null;
     
     setLocalStream(null);
     setRemoteStream(null);
