@@ -219,42 +219,51 @@ const EmotionVideoCallWithWebRTC = () => {
     return Math.random().toString(36).substring(2, 9);
   };
 
-  // Start call
-  const startCall = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: true
-      });
-      
-      setLocalStream(stream);
-      if (localVideoRef.current) {
+ // Start call
+const startCall = async () => {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: true,
+      audio: true
+    });
+    
+    console.log('✅ Got stream:', stream);
+    
+    // Set local stream FIRST
+    setLocalStream(stream);
+    
+    // IMPORTANT: Use setTimeout to ensure refs are ready
+    setTimeout(() => {
+      if (localVideoRef.current && stream) {
+        console.log('Setting local video...');
         localVideoRef.current.srcObject = stream;
-        // Force local video to play
-        localVideoRef.current.play().catch(e => {
-          console.error('Local video play error:', e);
-        });
+        localVideoRef.current.play().catch(e => console.error('Play error:', e));
+      } else {
+        console.error('Local video ref not ready!');
       }
-      
-      setCallActive(true);
-      
-      // Generate room ID if not provided
-      const room = roomId || generateRoomId();
-      setCurrentRoomId(room);
-      
-      // Connect to signaling server and join room
-      connectToServer();
-      
-      // Wait a bit for socket to connect
-      setTimeout(() => {
+    }, 100);
+    
+    setCallActive(true);
+    
+    // Generate room ID if not provided
+    const room = roomId || generateRoomId();
+    setCurrentRoomId(room);
+    
+    // Connect to signaling server and join room
+    connectToServer();
+    
+    // Wait for socket to connect
+    setTimeout(() => {
+      if (socketRef.current) {
         socketRef.current.emit('join-room', room);
-      }, 500);
-      
-    } catch (error) {
-      console.error('Error accessing media devices:', error);
-      alert('Could not access camera/microphone. Please check permissions.');
-    }
-  };
+      }
+    }, 500);
+    
+  } catch (error) {
+    console.error('Error accessing media devices:', error);
+    alert('Could not access camera/microphone. Please check permissions.');
+  }
+}; 
 
   // End call
   const endCall = () => {
@@ -456,11 +465,23 @@ const EmotionVideoCallWithWebRTC = () => {
     }
   };
 
-  useEffect(() => {
-    return () => {
-      endCall();
-    };
-  }, []);
+// Effect to ensure video plays when stream is set
+useEffect(() => {
+  if (localStream && localVideoRef.current) {
+    console.log('Effect: Setting local video stream');
+    localVideoRef.current.srcObject = localStream;
+    localVideoRef.current.play().catch(e => console.error('Play error:', e));
+  }
+}, [localStream]);
+
+// Effect for remote stream
+useEffect(() => {
+  if (remoteStream && remoteVideoRef.current) {
+    console.log('Effect: Setting remote video stream');
+    remoteVideoRef.current.srcObject = remoteStream;
+    remoteVideoRef.current.play().catch(e => console.error('Play error:', e));
+  }
+}, [remoteStream]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-6">
