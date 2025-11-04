@@ -72,7 +72,8 @@ const EmotionVideoCallWithWebRTC = () => {
   // Connect to signaling server
   const connectToServer = () => {
     // Change this URL to your deployed server URL
-    const serverUrl = 'https://emotion-video-server.onrender.com'; // Change for production
+    // const serverUrl = 'https://emotion-video-server.onrender.com'; // Change for production
+    const serverUrl = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001';
     console.log('Connecting to server:', serverUrl);
     socketRef.current = io(serverUrl);
 
