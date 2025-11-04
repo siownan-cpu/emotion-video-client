@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Camera, Mic, MicOff, Video, VideoOff, Phone, PhoneOff, AlertCircle, Heart, Frown, Smile, Meh, Copy, Check } from 'lucide-react';
+import { Camera, Mic, MicOff, Video, VideoOff, Phone, PhoneOff, AlertCircle, Heart, Frown, Smile, Meh, Copy, Check, TrendingUp, Clock, BarChart3 } from 'lucide-react';
 import io from 'socket.io-client';
 
 const EmotionVideoCallWithWebRTC = () => {
@@ -26,6 +26,34 @@ const EmotionVideoCallWithWebRTC = () => {
     history: []
   });
   
+  // ✨ NEW: Cumulative statistics for caregiver
+  const [callStatistics, setCallStatistics] = useState({
+    startTime: null,
+    duration: 0,
+    emotionCounts: {
+      happy: 0,
+      sad: 0,
+      neutral: 0,
+      angry: 0,
+      surprised: 0,
+      fearful: 0
+    },
+    emotionPercentages: {
+      happy: 0,
+      sad: 0,
+      neutral: 0,
+      angry: 0,
+      surprised: 0,
+      fearful: 0
+    },
+    alertsTriggered: 0,
+    avgConfidence: 0,
+    totalReadings: 0,
+    moodTrend: 'stable', // 'improving', 'declining', 'stable'
+    concernLevel: 'low', // 'low', 'medium', 'high'
+    engagementScore: 0 // 0-100
+  });
+  
   // Alert states
   const [alerts, setAlerts] = useState([]);
   const [speechSentiment, setSpeechSentiment] = useState({ score: 0, text: '' });
@@ -35,7 +63,8 @@ const EmotionVideoCallWithWebRTC = () => {
   const peerConnectionRef = useRef(null);
   const socketRef = useRef(null);
   const analysisIntervalRef = useRef(null);
-  const localStreamRef = useRef(null); // Store stream in ref for peer connection
+  const statisticsIntervalRef = useRef(null);
+  const localStreamRef = useRef(null);
 
   // CRITICAL: Effect to set local video stream whenever it changes
   useEffect(() => {
@@ -61,7 +90,7 @@ const EmotionVideoCallWithWebRTC = () => {
     }
   }, [remoteStream]);
 
-  // STUN servers for NAT traversal (free Google STUN servers)
+  // STUN servers for NAT traversal
   const iceServers = {
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
@@ -71,15 +100,14 @@ const EmotionVideoCallWithWebRTC = () => {
     ]
   };
 
-  // ✅ FIXED: Connect to signaling server with proper configuration
+  // Connect to signaling server
   const connectToServer = () => {
     const serverUrl = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001';
     console.log('🔧 Connecting to server:', serverUrl);
     console.log('🔧 Environment variable VITE_SERVER_URL:', import.meta.env.VITE_SERVER_URL);
     
-    // ✅ Enhanced Socket.IO configuration
     socketRef.current = io(serverUrl, {
-      transports: ['websocket', 'polling'], // Try websocket first, fallback to polling
+      transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionDelay: 1000,
       reconnectionAttempts: 5,
@@ -95,12 +123,10 @@ const EmotionVideoCallWithWebRTC = () => {
     socketRef.current.on('connect_error', (error) => {
       console.error('❌ Connection error:', error.message);
       console.error('❌ Attempted URL:', serverUrl);
-      addAlert('Connection error: ' + error.message, 'alert');
     });
 
     socketRef.current.on('disconnect', (reason) => {
       console.log('⚠️ Disconnected:', reason);
-      addAlert('Disconnected from server: ' + reason, 'warning');
     });
 
     socketRef.current.on('reconnect', (attemptNumber) => {
@@ -152,7 +178,6 @@ const EmotionVideoCallWithWebRTC = () => {
     console.log('Creating peer connection with:', remotePeerId);
     console.log('Stream to add:', stream);
 
-    // Add local stream tracks to peer connection
     if (stream) {
       const tracks = stream.getTracks();
       console.log('📹 Adding tracks to peer connection:', tracks.length, 'tracks');
@@ -165,7 +190,6 @@ const EmotionVideoCallWithWebRTC = () => {
       console.error('❌ No stream to add to peer connection!');
     }
 
-    // Handle incoming remote stream
     peerConnection.ontrack = (event) => {
       console.log('🎉 ontrack event fired!');
       console.log('  - Track kind:', event.track.kind);
@@ -174,16 +198,15 @@ const EmotionVideoCallWithWebRTC = () => {
       console.log('  - Streams:', event.streams.length);
       console.log('  - Stream tracks:', event.streams[0]?.getTracks().length);
       
-      // Set remote stream
       const remoteStreamReceived = event.streams[0];
       console.log('Setting remote stream:', remoteStreamReceived);
       setRemoteStream(remoteStreamReceived);
       setIsConnected(true);
       setAnalyzing(true);
       startAnalysis();
+      startStatisticsTracking();
     };
 
-    // Handle ICE candidates
     peerConnection.onicecandidate = (event) => {
       if (event.candidate) {
         console.log('Sending ICE candidate');
@@ -194,7 +217,6 @@ const EmotionVideoCallWithWebRTC = () => {
       }
     };
 
-    // Handle connection state changes
     peerConnection.onconnectionstatechange = () => {
       console.log('Connection state:', peerConnection.connectionState);
       if (peerConnection.connectionState === 'disconnected' || 
@@ -203,7 +225,6 @@ const EmotionVideoCallWithWebRTC = () => {
       }
     };
 
-    // ✅ Enhanced connection state monitoring
     peerConnection.oniceconnectionstatechange = () => {
       console.log('ICE connection state:', peerConnection.iceConnectionState);
     };
@@ -215,7 +236,6 @@ const EmotionVideoCallWithWebRTC = () => {
     return peerConnection;
   };
 
-  // Create and send offer
   const createOffer = async (remotePeerId, stream) => {
     console.log('createOffer called with stream:', stream);
     const peerConnection = createPeerConnection(remotePeerId, stream);
@@ -237,7 +257,6 @@ const EmotionVideoCallWithWebRTC = () => {
     }
   };
 
-  // Handle received offer
   const handleOffer = async (data) => {
     console.log('handleOffer called with data from:', data.from);
     const peerConnection = createPeerConnection(data.from, localStreamRef.current);
@@ -257,7 +276,6 @@ const EmotionVideoCallWithWebRTC = () => {
     }
   };
 
-  // Handle received answer
   const handleAnswer = async (data) => {
     console.log('handleAnswer called');
     try {
@@ -272,7 +290,6 @@ const EmotionVideoCallWithWebRTC = () => {
     }
   };
 
-  // Handle ICE candidate
   const handleIceCandidate = async (data) => {
     console.log('handleIceCandidate called');
     try {
@@ -287,12 +304,12 @@ const EmotionVideoCallWithWebRTC = () => {
     }
   };
 
-  // Handle user left
   const handleUserLeft = () => {
     console.log('Handling user left');
     setRemoteStream(null);
     setIsConnected(false);
     stopAnalysis();
+    stopStatisticsTracking();
     
     if (peerConnectionRef.current) {
       peerConnectionRef.current.close();
@@ -324,13 +341,17 @@ const EmotionVideoCallWithWebRTC = () => {
       });
 
       console.log('✅ Media stream obtained:', stream);
-      console.log('  - Video tracks:', stream.getVideoTracks().length);
-      console.log('  - Audio tracks:', stream.getAudioTracks().length);
       
       setLocalStream(stream);
       localStreamRef.current = stream;
       setCallActive(true);
       setCurrentRoomId(roomId);
+      
+      // Initialize statistics
+      setCallStatistics(prev => ({
+        ...prev,
+        startTime: Date.now()
+      }));
       
       connectToServer();
       
@@ -349,6 +370,7 @@ const EmotionVideoCallWithWebRTC = () => {
   const endCall = () => {
     console.log('Ending call');
     stopAnalysis();
+    stopStatisticsTracking();
     
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(track => track.stop());
@@ -375,7 +397,6 @@ const EmotionVideoCallWithWebRTC = () => {
     socketRef.current = null;
   };
 
-  // Toggle video
   const toggleVideo = () => {
     if (localStreamRef.current) {
       const videoTrack = localStreamRef.current.getVideoTracks()[0];
@@ -386,7 +407,6 @@ const EmotionVideoCallWithWebRTC = () => {
     }
   };
 
-  // Toggle audio
   const toggleAudio = () => {
     if (localStreamRef.current) {
       const audioTrack = localStreamRef.current.getAudioTracks()[0];
@@ -397,21 +417,146 @@ const EmotionVideoCallWithWebRTC = () => {
     }
   };
 
-  // Emotion detection simulation
+  // ✨ ENHANCED: More realistic emotion detection (still simulated but more believable)
   const detectEmotion = (videoElement, isLocal = false) => {
     if (!videoElement || videoElement.readyState !== 4) {
       return null;
     }
 
-    const emotions = ['happy', 'sad', 'neutral', 'angry', 'surprised'];
-    const randomEmotion = emotions[Math.floor(Math.random() * emotions.length)];
-    const confidence = 0.6 + Math.random() * 0.4;
+    // Simulated emotion detection with more realistic patterns
+    // In production, this would use TensorFlow.js with face-api.js or similar
+    const emotions = ['happy', 'sad', 'neutral', 'angry', 'surprised', 'fearful'];
+    
+    // Weight emotions more realistically (neutral and happy are more common)
+    const weights = [0.30, 0.15, 0.35, 0.05, 0.10, 0.05]; // Adds up to 1.0
+    const random = Math.random();
+    let cumulative = 0;
+    let selectedEmotion = 'neutral';
+    
+    for (let i = 0; i < emotions.length; i++) {
+      cumulative += weights[i];
+      if (random <= cumulative) {
+        selectedEmotion = emotions[i];
+        break;
+      }
+    }
+    
+    // Add slight randomness to confidence
+    const baseConfidence = 0.65;
+    const variability = 0.25;
+    const confidence = baseConfidence + (Math.random() * variability);
 
     return {
-      primary: randomEmotion,
-      confidence: confidence,
+      primary: selectedEmotion,
+      confidence: Math.min(0.95, confidence),
       timestamp: Date.now()
     };
+  };
+
+  // ✨ NEW: Calculate cumulative statistics
+  const calculateStatistics = () => {
+    if (remoteEmotions.history.length === 0) return;
+
+    const history = remoteEmotions.history;
+    const totalReadings = history.length;
+    
+    // Count each emotion
+    const counts = {
+      happy: 0,
+      sad: 0,
+      neutral: 0,
+      angry: 0,
+      surprised: 0,
+      fearful: 0
+    };
+    
+    let totalConfidence = 0;
+    
+    history.forEach(emotion => {
+      counts[emotion.primary] = (counts[emotion.primary] || 0) + 1;
+      totalConfidence += emotion.confidence;
+    });
+    
+    // Calculate percentages
+    const percentages = {};
+    Object.keys(counts).forEach(emotion => {
+      percentages[emotion] = (counts[emotion] / totalReadings) * 100;
+    });
+    
+    // Calculate average confidence
+    const avgConfidence = totalConfidence / totalReadings;
+    
+    // Determine mood trend (last 10 readings vs previous 10)
+    let moodTrend = 'stable';
+    if (history.length >= 20) {
+      const recent = history.slice(-10);
+      const previous = history.slice(-20, -10);
+      
+      const recentPositive = recent.filter(e => e.primary === 'happy' || e.primary === 'surprised').length;
+      const previousPositive = previous.filter(e => e.primary === 'happy' || e.primary === 'surprised').length;
+      
+      if (recentPositive > previousPositive + 2) {
+        moodTrend = 'improving';
+      } else if (recentPositive < previousPositive - 2) {
+        moodTrend = 'declining';
+      }
+    }
+    
+    // Calculate concern level
+    const negativePercentage = percentages.sad + percentages.angry + percentages.fearful;
+    let concernLevel = 'low';
+    if (negativePercentage > 40) {
+      concernLevel = 'high';
+    } else if (negativePercentage > 25) {
+      concernLevel = 'medium';
+    }
+    
+    // Calculate engagement score (0-100)
+    const engagementScore = Math.round(
+      (percentages.happy * 1.0 + 
+       percentages.surprised * 0.8 + 
+       percentages.neutral * 0.5 + 
+       percentages.sad * 0.2 + 
+       percentages.fearful * 0.1 + 
+       percentages.angry * 0.1)
+    );
+    
+    // Calculate call duration
+    const duration = callStatistics.startTime 
+      ? Math.floor((Date.now() - callStatistics.startTime) / 1000) 
+      : 0;
+    
+    setCallStatistics({
+      startTime: callStatistics.startTime,
+      duration,
+      emotionCounts: counts,
+      emotionPercentages: percentages,
+      alertsTriggered: alerts.length,
+      avgConfidence,
+      totalReadings,
+      moodTrend,
+      concernLevel,
+      engagementScore
+    });
+  };
+
+  // ✨ NEW: Start statistics tracking
+  const startStatisticsTracking = () => {
+    if (statisticsIntervalRef.current) {
+      clearInterval(statisticsIntervalRef.current);
+    }
+
+    statisticsIntervalRef.current = setInterval(() => {
+      calculateStatistics();
+    }, 3000); // Update every 3 seconds
+  };
+
+  // ✨ NEW: Stop statistics tracking
+  const stopStatisticsTracking = () => {
+    if (statisticsIntervalRef.current) {
+      clearInterval(statisticsIntervalRef.current);
+      statisticsIntervalRef.current = null;
+    }
   };
 
   // Start emotion analysis
@@ -427,32 +572,35 @@ const EmotionVideoCallWithWebRTC = () => {
       if (localEmotion) {
         setLocalEmotions(prev => ({
           ...localEmotion,
-          history: [...prev.history.slice(-19), localEmotion]
+          history: [...prev.history.slice(-99), localEmotion] // Keep last 100
         }));
       }
 
       if (remoteEmotion) {
         setRemoteEmotions(prev => ({
           ...remoteEmotion,
-          history: [...prev.history.slice(-19), remoteEmotion]
+          history: [...prev.history.slice(-99), remoteEmotion] // Keep last 100
         }));
 
+        // Trigger alerts for concerning emotions
         if (remoteEmotion.primary === 'sad' && remoteEmotion.confidence > 0.7) {
-          addAlert('Remote user appears distressed', 'alert');
+          addAlert('Patient appears distressed', 'alert');
         } else if (remoteEmotion.primary === 'angry' && remoteEmotion.confidence > 0.75) {
           addAlert('Elevated tension detected', 'warning');
+        } else if (remoteEmotion.primary === 'fearful' && remoteEmotion.confidence > 0.7) {
+          addAlert('Patient may be anxious or fearful', 'alert');
         }
       }
 
+      // Simulate speech sentiment
       const sentimentScore = Math.random() * 2 - 1;
       setSpeechSentiment({
         score: sentimentScore,
         detectedPhrase: sentimentScore < -0.5 ? 'Negative tone detected' : null
       });
-    }, 2000);
+    }, 2000); // Analyze every 2 seconds
   };
 
-  // Stop emotion analysis
   const stopAnalysis = () => {
     if (analysisIntervalRef.current) {
       clearInterval(analysisIntervalRef.current);
@@ -460,7 +608,6 @@ const EmotionVideoCallWithWebRTC = () => {
     }
   };
 
-  // Add alert
   const addAlert = (message, type = 'warning') => {
     const newAlert = {
       id: Date.now(),
@@ -471,14 +618,12 @@ const EmotionVideoCallWithWebRTC = () => {
     setAlerts(prev => [...prev.slice(-9), newAlert]);
   };
 
-  // Copy room ID
   const copyRoomId = () => {
     navigator.clipboard.writeText(currentRoomId);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // Get emotion icon
   const getEmotionIcon = (emotion) => {
     switch (emotion) {
       case 'happy':
@@ -487,12 +632,13 @@ const EmotionVideoCallWithWebRTC = () => {
         return <Frown className="w-4 h-4" />;
       case 'angry':
         return <AlertCircle className="w-4 h-4" />;
+      case 'fearful':
+        return <AlertCircle className="w-4 h-4" />;
       default:
         return <Meh className="w-4 h-4" />;
     }
   };
 
-  // Get emotion color
   const getEmotionColor = (emotion) => {
     switch (emotion) {
       case 'happy':
@@ -503,8 +649,43 @@ const EmotionVideoCallWithWebRTC = () => {
         return 'bg-red-500 bg-opacity-90';
       case 'surprised':
         return 'bg-yellow-500 bg-opacity-90';
+      case 'fearful':
+        return 'bg-orange-500 bg-opacity-90';
       default:
         return 'bg-gray-500 bg-opacity-90';
+    }
+  };
+
+  // ✨ NEW: Format duration helper
+  const formatDuration = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  // ✨ NEW: Get concern level color
+  const getConcernLevelColor = (level) => {
+    switch (level) {
+      case 'low':
+        return 'text-green-600 bg-green-50';
+      case 'medium':
+        return 'text-yellow-600 bg-yellow-50';
+      case 'high':
+        return 'text-red-600 bg-red-50';
+      default:
+        return 'text-gray-600 bg-gray-50';
+    }
+  };
+
+  // ✨ NEW: Get mood trend icon and color
+  const getMoodTrendDisplay = (trend) => {
+    switch (trend) {
+      case 'improving':
+        return { icon: '📈', color: 'text-green-600', text: 'Improving' };
+      case 'declining':
+        return { icon: '📉', color: 'text-red-600', text: 'Declining' };
+      default:
+        return { icon: '➡️', color: 'text-gray-600', text: 'Stable' };
     }
   };
 
@@ -514,9 +695,9 @@ const EmotionVideoCallWithWebRTC = () => {
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-gray-800 mb-2 flex items-center justify-center gap-2">
             <Heart className="w-10 h-10 text-red-500" />
-            Emotion Video Call
+            Emotion Video Call with Statistics
           </h1>
-          <p className="text-gray-600">Real-time emotion detection during video calls</p>
+          <p className="text-gray-600">Real-time emotion tracking with cumulative caregiver insights</p>
         </div>
 
         {!callActive ? (
@@ -576,13 +757,17 @@ const EmotionVideoCallWithWebRTC = () => {
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <div className="lg:col-span-2 space-y-4">
+                {/* Remote Video */}
                 <div className="bg-white rounded-xl shadow-lg overflow-hidden">
                   <div className="bg-gradient-to-r from-purple-600 to-pink-600 text-white px-4 py-2 flex items-center justify-between">
-                    <span className="font-semibold">Remote User</span>
+                    <span className="font-semibold">Patient</span>
                     {isConnected && analyzing && (
                       <div className={`flex items-center gap-1 px-3 py-1 rounded-full ${getEmotionColor(remoteEmotions.primary)}`}>
                         {getEmotionIcon(remoteEmotions.primary)}
                         <span className="text-sm font-medium capitalize">{remoteEmotions.primary}</span>
+                        <span className="text-xs ml-1">
+                          ({Math.round(remoteEmotions.confidence * 100)}%)
+                        </span>
                       </div>
                     )}
                   </div>
@@ -610,9 +795,10 @@ const EmotionVideoCallWithWebRTC = () => {
                   </div>
                 </div>
 
+                {/* Local Video */}
                 <div className="bg-white rounded-xl shadow-lg overflow-hidden">
                   <div className="bg-gradient-to-r from-blue-600 to-cyan-600 text-white px-4 py-2 flex items-center justify-between">
-                    <span className="font-semibold">You</span>
+                    <span className="font-semibold">You (Caregiver)</span>
                     {analyzing && (
                       <div className={`flex items-center gap-1 px-3 py-1 rounded-full ${getEmotionColor(localEmotions.primary)}`}>
                         {getEmotionIcon(localEmotions.primary)}
@@ -632,6 +818,7 @@ const EmotionVideoCallWithWebRTC = () => {
                   </div>
                 </div>
 
+                {/* Controls */}
                 <div className="bg-white rounded-xl shadow-lg p-6">
                   <div className="flex items-center justify-center gap-4">
                     <button
@@ -665,9 +852,104 @@ const EmotionVideoCallWithWebRTC = () => {
                     </button>
                   </div>
                 </div>
+
+                {/* ✨ NEW: Cumulative Statistics Dashboard */}
+                {isConnected && analyzing && callStatistics.totalReadings > 0 && (
+                  <div className="bg-white rounded-xl shadow-lg p-6">
+                    <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
+                      <BarChart3 className="w-5 h-5 text-indigo-600" />
+                      Call Statistics Dashboard
+                    </h3>
+                    
+                    {/* Summary Cards */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                      <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-4">
+                        <div className="flex items-center gap-2 mb-1">
+                          <Clock className="w-4 h-4 text-blue-600" />
+                          <p className="text-xs text-blue-600 font-medium">Duration</p>
+                        </div>
+                        <p className="text-2xl font-bold text-blue-900">
+                          {formatDuration(callStatistics.duration)}
+                        </p>
+                      </div>
+
+                      <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-lg p-4">
+                        <div className="flex items-center gap-2 mb-1">
+                          <TrendingUp className="w-4 h-4 text-purple-600" />
+                          <p className="text-xs text-purple-600 font-medium">Engagement</p>
+                        </div>
+                        <p className="text-2xl font-bold text-purple-900">
+                          {callStatistics.engagementScore}%
+                        </p>
+                      </div>
+
+                      <div className={`rounded-lg p-4 ${getConcernLevelColor(callStatistics.concernLevel)}`}>
+                        <div className="flex items-center gap-2 mb-1">
+                          <AlertCircle className="w-4 h-4" />
+                          <p className="text-xs font-medium">Concern Level</p>
+                        </div>
+                        <p className="text-2xl font-bold capitalize">
+                          {callStatistics.concernLevel}
+                        </p>
+                      </div>
+
+                      <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-lg p-4">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-lg">{getMoodTrendDisplay(callStatistics.moodTrend).icon}</span>
+                          <p className="text-xs text-gray-600 font-medium">Mood Trend</p>
+                        </div>
+                        <p className={`text-xl font-bold ${getMoodTrendDisplay(callStatistics.moodTrend).color}`}>
+                          {getMoodTrendDisplay(callStatistics.moodTrend).text}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Emotion Breakdown */}
+                    <div className="space-y-3">
+                      <h4 className="font-semibold text-sm text-gray-700 mb-3">
+                        Emotion Distribution ({callStatistics.totalReadings} readings)
+                      </h4>
+                      
+                      {Object.entries(callStatistics.emotionPercentages)
+                        .sort((a, b) => b[1] - a[1])
+                        .map(([emotion, percentage]) => (
+                          <div key={emotion} className="flex items-center gap-3">
+                            <div className="w-20 text-sm capitalize text-gray-700 font-medium">
+                              {emotion}
+                            </div>
+                            <div className="flex-1 bg-gray-200 rounded-full h-6 overflow-hidden">
+                              <div
+                                className={`h-full flex items-center justify-end px-2 text-white text-xs font-bold transition-all duration-500 ${
+                                  emotion === 'happy' ? 'bg-green-500' :
+                                  emotion === 'sad' ? 'bg-blue-500' :
+                                  emotion === 'angry' ? 'bg-red-500' :
+                                  emotion === 'fearful' ? 'bg-orange-500' :
+                                  emotion === 'surprised' ? 'bg-yellow-500' :
+                                  'bg-gray-500'
+                                }`}
+                                style={{ width: `${percentage}%` }}
+                              >
+                                {percentage > 8 && `${percentage.toFixed(1)}%`}
+                              </div>
+                            </div>
+                            <div className="w-16 text-sm text-gray-600 text-right">
+                              {callStatistics.emotionCounts[emotion]} times
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+
+                    <div className="mt-4 pt-4 border-t border-gray-200 text-xs text-gray-500">
+                      <p>Average confidence: {(callStatistics.avgConfidence * 100).toFixed(1)}%</p>
+                      <p>Total alerts triggered: {callStatistics.alertsTriggered}</p>
+                    </div>
+                  </div>
+                )}
               </div>
 
+              {/* Right Sidebar */}
               <div className="space-y-4">
+                {/* Alert Monitor */}
                 <div className="bg-white rounded-xl shadow-lg p-6">
                   <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
                     <AlertCircle className="w-5 h-5 text-orange-600" />
@@ -678,8 +960,8 @@ const EmotionVideoCallWithWebRTC = () => {
                       {isConnected ? 'No concerns detected' : 'Waiting for connection...'}
                     </p>
                   ) : (
-                    <div className="space-y-2">
-                      {alerts.map((alert) => (
+                    <div className="space-y-2 max-h-64 overflow-y-auto">
+                      {alerts.slice().reverse().map((alert) => (
                         <div
                           key={alert.id}
                           className={`p-3 rounded-lg border-l-4 ${
@@ -698,69 +980,73 @@ const EmotionVideoCallWithWebRTC = () => {
                   )}
                 </div>
 
+                {/* Speech Analysis */}
                 {isConnected && analyzing && (
-                  <>
-                    <div className="bg-white rounded-xl shadow-lg p-6">
-                      <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
-                        <Mic className="w-5 h-5 text-blue-600" />
-                        Speech Analysis
-                      </h3>
-                      <div className="space-y-3">
-                        <div>
-                          <div className="flex justify-between text-sm mb-1">
-                            <span className="text-gray-600">Sentiment</span>
-                            <span className={`font-medium ${
-                              speechSentiment.score > 0 ? 'text-green-600' : 
-                              speechSentiment.score < -0.5 ? 'text-red-600' : 'text-gray-600'
-                            }`}>
-                              {speechSentiment.score > 0 ? 'Positive' : 
-                               speechSentiment.score < -0.5 ? 'Negative' : 'Neutral'}
-                            </span>
-                          </div>
-                          <div className="w-full bg-gray-200 rounded-full h-2">
-                            <div
-                              className={`h-2 rounded-full transition-all ${
-                                speechSentiment.score > 0 ? 'bg-green-500' : 
-                                speechSentiment.score < -0.5 ? 'bg-red-500' : 'bg-gray-400'
-                              }`}
-                              style={{ width: `${Math.abs(speechSentiment.score) * 100}%` }}
-                            />
-                          </div>
+                  <div className="bg-white rounded-xl shadow-lg p-6">
+                    <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
+                      <Mic className="w-5 h-5 text-blue-600" />
+                      Speech Analysis
+                    </h3>
+                    <div className="space-y-3">
+                      <div>
+                        <div className="flex justify-between text-sm mb-1">
+                          <span className="text-gray-600">Sentiment</span>
+                          <span className={`font-medium ${
+                            speechSentiment.score > 0 ? 'text-green-600' : 
+                            speechSentiment.score < -0.5 ? 'text-red-600' : 'text-gray-600'
+                          }`}>
+                            {speechSentiment.score > 0 ? 'Positive' : 
+                             speechSentiment.score < -0.5 ? 'Negative' : 'Neutral'}
+                          </span>
                         </div>
-                        {speechSentiment.detectedPhrase && (
-                          <div className="bg-gray-50 rounded-lg p-3">
-                            <p className="text-xs text-gray-600 mb-1">Detected phrase:</p>
-                            <p className="text-sm italic">"{speechSentiment.detectedPhrase}"</p>
-                          </div>
-                        )}
+                        <div className="w-full bg-gray-200 rounded-full h-2">
+                          <div
+                            className={`h-2 rounded-full transition-all ${
+                              speechSentiment.score > 0 ? 'bg-green-500' : 
+                              speechSentiment.score < -0.5 ? 'bg-red-500' : 'bg-gray-400'
+                            }`}
+                            style={{ width: `${Math.abs(speechSentiment.score) * 100}%` }}
+                          />
+                        </div>
                       </div>
+                      {speechSentiment.detectedPhrase && (
+                        <div className="bg-gray-50 rounded-lg p-3">
+                          <p className="text-xs text-gray-600 mb-1">Detected:</p>
+                          <p className="text-sm italic">"{speechSentiment.detectedPhrase}"</p>
+                        </div>
+                      )}
                     </div>
+                  </div>
+                )}
 
-                    {remoteEmotions.history.length > 0 && (
-                      <div className="bg-white rounded-xl shadow-lg p-6">
-                        <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
-                          <Heart className="w-5 h-5 text-pink-600" />
-                          Emotion Timeline
-                        </h3>
-                        <div className="space-y-2">
-                          {remoteEmotions.history.slice(-5).reverse().map((emotion, idx) => (
-                            <div key={idx} className="flex items-center gap-2">
-                              <div className={`w-3 h-3 rounded-full ${
-                                emotion.primary === 'happy' ? 'bg-green-500' :
-                                emotion.primary === 'sad' ? 'bg-blue-500' :
-                                emotion.primary === 'angry' ? 'bg-red-500' :
-                                'bg-gray-400'
-                              }`} />
-                              <span className="text-sm capitalize flex-1">{emotion.primary}</span>
-                              <span className="text-xs text-gray-500">
-                                {new Date(emotion.timestamp).toLocaleTimeString()}
-                              </span>
-                            </div>
-                          ))}
+                {/* Emotion Timeline */}
+                {remoteEmotions.history.length > 0 && (
+                  <div className="bg-white rounded-xl shadow-lg p-6">
+                    <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
+                      <Heart className="w-5 h-5 text-pink-600" />
+                      Recent Timeline
+                    </h3>
+                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                      {remoteEmotions.history.slice(-8).reverse().map((emotion, idx) => (
+                        <div key={idx} className="flex items-center gap-2">
+                          <div className={`w-3 h-3 rounded-full flex-shrink-0 ${
+                            emotion.primary === 'happy' ? 'bg-green-500' :
+                            emotion.primary === 'sad' ? 'bg-blue-500' :
+                            emotion.primary === 'angry' ? 'bg-red-500' :
+                            emotion.primary === 'fearful' ? 'bg-orange-500' :
+                            emotion.primary === 'surprised' ? 'bg-yellow-500' :
+                            'bg-gray-400'
+                          }`} />
+                          <span className="text-sm capitalize flex-1 min-w-0 truncate">
+                            {emotion.primary}
+                          </span>
+                          <span className="text-xs text-gray-500 flex-shrink-0">
+                            {new Date(emotion.timestamp).toLocaleTimeString()}
+                          </span>
                         </div>
-                      </div>
-                    )}
-                  </>
+                      ))}
+                    </div>
+                  </div>
                 )}
               </div>
             </div>
