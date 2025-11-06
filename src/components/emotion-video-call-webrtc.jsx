@@ -455,10 +455,14 @@ const EmotionVideoCallWithWebRTC = () => {
 
   // ✨ NEW: Calculate cumulative statistics
   const calculateStatistics = () => {
-    if (remoteEmotions.history.length === 0) return;
+    if (remoteEmotions.history.length === 0) {
+      console.log('📊 No emotion history yet');
+      return;
+    }
 
     const history = remoteEmotions.history;
     const totalReadings = history.length;
+    console.log('📊 Calculating statistics for', totalReadings, 'readings');
     
     // Count each emotion
     const counts = {
@@ -854,7 +858,7 @@ const EmotionVideoCallWithWebRTC = () => {
                 </div>
 
                 {/* ✨ NEW: Cumulative Statistics Dashboard */}
-                {isConnected && analyzing && callStatistics.totalReadings > 0 && (
+                {isConnected && analyzing && (
                   <div className="bg-white rounded-xl shadow-lg p-6">
                     <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
                       <BarChart3 className="w-5 h-5 text-indigo-600" />
@@ -910,33 +914,42 @@ const EmotionVideoCallWithWebRTC = () => {
                         Emotion Distribution ({callStatistics.totalReadings} readings)
                       </h4>
                       
-                      {Object.entries(callStatistics.emotionPercentages)
-                        .sort((a, b) => b[1] - a[1])
-                        .map(([emotion, percentage]) => (
-                          <div key={emotion} className="flex items-center gap-3">
-                            <div className="w-20 text-sm capitalize text-gray-700 font-medium">
-                              {emotion}
-                            </div>
-                            <div className="flex-1 bg-gray-200 rounded-full h-6 overflow-hidden">
-                              <div
-                                className={`h-full flex items-center justify-end px-2 text-white text-xs font-bold transition-all duration-500 ${
-                                  emotion === 'happy' ? 'bg-green-500' :
-                                  emotion === 'sad' ? 'bg-blue-500' :
-                                  emotion === 'angry' ? 'bg-red-500' :
-                                  emotion === 'fearful' ? 'bg-orange-500' :
-                                  emotion === 'surprised' ? 'bg-yellow-500' :
-                                  'bg-gray-500'
-                                }`}
-                                style={{ width: `${percentage}%` }}
-                              >
-                                {percentage > 8 && `${percentage.toFixed(1)}%`}
+                      {callStatistics.totalReadings === 0 ? (
+                        <div className="text-center py-8 text-gray-500">
+                          <p className="text-sm">Collecting emotion data...</p>
+                          <p className="text-xs mt-2">Statistics will appear in a few seconds</p>
+                        </div>
+                      ) : (
+                        <>
+                          {Object.entries(callStatistics.emotionPercentages)
+                            .sort((a, b) => b[1] - a[1])
+                            .map(([emotion, percentage]) => (
+                              <div key={emotion} className="flex items-center gap-3">
+                                <div className="w-20 text-sm capitalize text-gray-700 font-medium">
+                                  {emotion}
+                                </div>
+                                <div className="flex-1 bg-gray-200 rounded-full h-6 overflow-hidden">
+                                  <div
+                                    className={`h-full flex items-center justify-end px-2 text-white text-xs font-bold transition-all duration-500 ${
+                                      emotion === 'happy' ? 'bg-green-500' :
+                                      emotion === 'sad' ? 'bg-blue-500' :
+                                      emotion === 'angry' ? 'bg-red-500' :
+                                      emotion === 'fearful' ? 'bg-orange-500' :
+                                      emotion === 'surprised' ? 'bg-yellow-500' :
+                                      'bg-gray-500'
+                                    }`}
+                                    style={{ width: `${percentage}%` }}
+                                  >
+                                    {percentage > 8 && `${percentage.toFixed(1)}%`}
+                                  </div>
+                                </div>
+                                <div className="w-16 text-sm text-gray-600 text-right">
+                                  {callStatistics.emotionCounts[emotion]} times
+                                </div>
                               </div>
-                            </div>
-                            <div className="w-16 text-sm text-gray-600 text-right">
-                              {callStatistics.emotionCounts[emotion]} times
-                            </div>
-                          </div>
-                        ))}
+                            ))}
+                        </>
+                      )}
                     </div>
 
                     <div className="mt-4 pt-4 border-t border-gray-200 text-xs text-gray-500">
