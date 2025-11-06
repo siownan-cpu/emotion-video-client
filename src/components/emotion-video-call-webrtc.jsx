@@ -321,7 +321,7 @@ const EmotionVideoCallWithWebRTC = () => {
     ],
     iceCandidatePoolSize: 10,
     // ✨ UNCOMMENT THIS LINE TO FORCE TURN RELAY (for testing on restricted networks)
-    iceTransportPolicy: 'relay'  // Forces all traffic through TURN servers
+    // iceTransportPolicy: 'relay'  // Forces all traffic through TURN servers
   };
 
   const connectToServer = () => {
