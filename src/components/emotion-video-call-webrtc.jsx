@@ -1191,10 +1191,11 @@ const EmotionVideoCallWithWebRTC = () => {
               </div>
 
               <div className="mb-6">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label htmlFor="metered-api-key" className="block text-sm font-medium text-gray-700 mb-2">
                   Metered API Key
                 </label>
                 <input
+                  id="metered-api-key"
                   type="text"
                   value={meteredApiKey}
                   onChange={(e) => setMeteredApiKey(e.target.value)}
