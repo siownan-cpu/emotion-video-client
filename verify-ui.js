@@ -12,7 +12,17 @@ const { chromium } = require('playwright');
   const page = await browser.newPage();
 
   try {
-    await page.goto('http://localhost:3000');
+    // Login
+    await page.goto('http://localhost:3000/login');
+    await page.fill('input[type="email"]', 'siownan@gmail.com');
+    await page.fill('input[type="password"]', 'password123'); // Assuming a known password for testing
+    await page.click('button[type="submit"]');
+    await page.waitForURL('http://localhost:3000/dashboard');
+
+    // Go to video call
+    await page.click('text=Go to Video Call');
+    await page.waitForURL('http://localhost:3000/video-call');
+
     await page.fill('#room-id-input', 'test-room');
     await page.click('button:has-text("Start Call")');
     await page.waitForSelector('video[data-testid="local-video"]');
