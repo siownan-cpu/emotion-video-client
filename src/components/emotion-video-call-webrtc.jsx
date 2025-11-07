@@ -1099,85 +1099,12 @@ const EmotionVideoCallWithWebRTC = () => {
         {!callActive ? (
           <div className="max-w-md mx-auto space-y-4">
             <div className="bg-white rounded-2xl shadow-xl p-8">
-              <h3 className="font-semibold text-lg mb-4 flex items-center gap-2">
-                <Settings className="w-5 h-5" />
-                Device Settings
-              </h3>
-
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  📹 Camera
-                </label>
-                <select
-                  value={selectedDevices.videoDeviceId}
-                  onChange={(e) => setSelectedDevices(prev => ({
-                    ...prev,
-                    videoDeviceId: e.target.value
-                  }))}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                  {availableDevices.videoInputs.map(device => (
-                    <option key={device.deviceId} value={device.deviceId}>
-                      {device.label || `Camera ${availableDevices.videoInputs.indexOf(device) + 1}`}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  🎤 Microphone
-                </label>
-                <select
-                  value={selectedDevices.audioDeviceId}
-                  onChange={(e) => setSelectedDevices(prev => ({
-                    ...prev,
-                    audioDeviceId: e.target.value
-                  }))}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                  {availableDevices.audioInputs.map(device => (
-                    <option key={device.deviceId} value={device.deviceId}>
-                      {device.label || `Microphone ${availableDevices.audioInputs.indexOf(device) + 1}`}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  🔊 Speaker
-                </label>
-                <select
-                  value={selectedDevices.audioOutputDeviceId}
-                  onChange={(e) => setSelectedDevices(prev => ({
-                    ...prev,
-                    audioOutputDeviceId: e.target.value
-                  }))}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                  {availableDevices.audioOutputs.map(device => (
-                    <option key={device.deviceId} value={device.deviceId}>
-                      {device.label || `Speaker ${availableDevices.audioOutputs.indexOf(device) + 1}`}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <button
-                onClick={loadAvailableDevices}
-                className="w-full px-4 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
-              >
-                🔄 Refresh Devices
-              </button>
-            </div>
-
-            <div className="bg-white rounded-2xl shadow-xl p-8">
               <div className="mb-6">
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Room ID
                 </label>
                 <input
+                  id="room-id-input"
                   type="text"
                   value={roomId}
                   onChange={(e) => setRoomId(e.target.value)}
@@ -1446,6 +1373,7 @@ const EmotionVideoCallWithWebRTC = () => {
                       muted
                       className="w-full h-full object-cover"
                       style={{ backgroundColor: '#000', transform: 'scaleX(-1)' }}
+                      data-testid="local-video"
                     />
                   </div>
                 </div>
@@ -1486,29 +1414,6 @@ const EmotionVideoCallWithWebRTC = () => {
               </div>
 
               <div className="space-y-4">
-                <div className="bg-white rounded-xl shadow-lg p-6">
-                  <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
-                    <AlertCircle className="w-5 h-5 text-orange-600" />
-                    Debug Info
-                  </h3>
-                  <div className="space-y-2 text-xs font-mono">
-                    <div>Socket: <span className={getConnectionStatusColor(connectionStatus.socket)}>{connectionStatus.socket}</span></div>
-                    <div>Peer: <span className={getConnectionStatusColor(connectionStatus.peer)}>{connectionStatus.peer}</span></div>
-                    <div>ICE: <span className={getConnectionStatusColor(connectionStatus.ice)}>{connectionStatus.ice}</span></div>
-                    <div>Local ICE: {iceStats.localCandidates}</div>
-                    <div>Remote ICE: {iceStats.remoteCandidates}</div>
-                    {iceStats.selectedPair && (
-                      <div className="text-green-600 font-semibold">
-                        Selected: {iceStats.selectedPair}
-                      </div>
-                    )}
-                  </div>
-                  <div className="mt-4 text-xs text-gray-500">
-                    <p>💡 Check browser console (F12) for detailed logs</p>
-                    <p>💡 Look for "relay" in logs to confirm TURN usage</p>
-                  </div>
-                </div>
-
                 <div className="bg-white rounded-xl shadow-lg p-6">
                   <h3 className="font-bold text-lg mb-4">Alerts</h3>
                   {alerts.length === 0 ? (
