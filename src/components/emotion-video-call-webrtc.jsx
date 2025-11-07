@@ -26,7 +26,6 @@ const EmotionVideoCallWithWebRTC = () => {
     audioOutputDeviceId: ''
   });
   const [showDeviceSettings, setShowDeviceSettings] = useState(false);
-
   const [connectionStatus, setConnectionStatus] = useState({
     socket: 'disconnected',
     peer: 'disconnected',
@@ -1206,6 +1205,59 @@ const EmotionVideoCallWithWebRTC = () => {
                   Required for reliable connection. Get a free key from <a href="https://www.metered.ca/tools/openrelay" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Metered Open Relay</a>.
                 </p>
               </div>
+
+              <div className="mt-4 pt-4 border-t border-gray-200 grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                      📹 Camera
+                    </label>
+                    <select
+                      value={selectedDevices.videoDeviceId}
+                      onChange={(e) => changeVideoDevice(e.target.value)}
+                      className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      {availableDevices.videoInputs.map(device => (
+                        <option key={device.deviceId} value={device.deviceId}>
+                          {device.label || `Camera ${availableDevices.videoInputs.indexOf(device) + 1}`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                      🎤 Microphone
+                    </label>
+                    <select
+                      value={selectedDevices.audioDeviceId}
+                      onChange={(e) => changeAudioDevice(e.target.value)}
+                      className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      {availableDevices.audioInputs.map(device => (
+                        <option key={device.deviceId} value={device.deviceId}>
+                          {device.label || `Microphone ${availableDevices.audioInputs.indexOf(device) + 1}`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                      🔊 Speaker
+                    </label>
+                    <select
+                      value={selectedDevices.audioOutputDeviceId}
+                      onChange={(e) => changeAudioOutput(e.target.value)}
+                      className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      {availableDevices.audioOutputs.map(device => (
+                        <option key={device.deviceId} value={device.deviceId}>
+                          {device.label || `Speaker ${availableDevices.audioOutputs.indexOf(device) + 1}`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
 
               <button
                 onClick={startCall}
