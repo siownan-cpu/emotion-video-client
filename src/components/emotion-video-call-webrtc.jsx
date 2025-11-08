@@ -1,6 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Camera, Mic, MicOff, Video, VideoOff, Phone, PhoneOff, AlertCircle, Heart, Frown, Smile, Meh, Copy, Check, TrendingUp, Clock, BarChart3, Wifi, WifiOff, Settings } from 'lucide-react';
 import io from 'socket.io-client';
+import SpeechEmotionAnalyzer from '../utils/SpeechEmotionAnalyzer';
+import EnhancedStatisticsPanel from './EnhancedStatisticsPanel';
+import SpeechEmotionIndicator from './SpeechEmotionIndicator';
 
 const EmotionVideoCallWithWebRTC = () => {
   const [callActive, setCallActive] = useState(false);
@@ -80,6 +83,13 @@ const EmotionVideoCallWithWebRTC = () => {
   const [alerts, setAlerts] = useState([]);
   const [speechSentiment, setSpeechSentiment] = useState({ score: 0, text: '' });
 
+  // Speech emotion detection
+  const [speechAnalyzer, setSpeechAnalyzer] = useState(null);
+  const [currentSpeechEmotion, setCurrentSpeechEmotion] = useState(null);
+  const [speechEmotionStats, setSpeechEmotionStats] = useState(null);
+  const [isAnalyzingSpeech, setIsAnalyzingSpeech] = useState(false);
+  const [demoMode, setDemoMode] = useState(false);
+
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const peerConnectionRef = useRef(null);
@@ -89,6 +99,17 @@ const EmotionVideoCallWithWebRTC = () => {
   const localStreamRef = useRef(null);
   const remotePeerIdRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
+  const demoIntervalRef = useRef(null);
+
+  // Auto-start speech analysis when connected
+  useEffect(() => {
+    if (callActive && isConnected && speechAnalyzer && !isAnalyzingSpeech) {
+      console.log('🎤 Auto-starting speech analysis...');
+      setTimeout(() => {
+        startSpeechAnalysis();
+      }, 2000);
+    }
+  }, [callActive, isConnected, speechAnalyzer]);
 
   useEffect(() => {
     // Moved to startCall to avoid premature device access request
@@ -702,6 +723,81 @@ const EmotionVideoCallWithWebRTC = () => {
     addAlert('Remote user disconnected', 'warning');
   };
 
+  const startSpeechAnalysis = () => {
+    if (!speechAnalyzer) {
+      console.warn('Speech analyzer not initialized');
+      return;
+    }
+
+    if (demoMode) {
+      console.log('🎭 Starting speech analysis in DEMO mode');
+      setIsAnalyzingSpeech(true);
+      demoIntervalRef.current = setInterval(() => {
+        const demoEmotion = speechAnalyzer.generateDemoEmotion();
+        setCurrentSpeechEmotion(demoEmotion);
+        
+        speechAnalyzer.emotionHistory.push({
+          emotion: demoEmotion.emotion,
+          confidence: demoEmotion.confidence,
+          timestamp: Date.now(),
+          transcript: demoEmotion.transcript
+        });
+        
+        const stats = speechAnalyzer.getEmotionStatistics();
+        setSpeechEmotionStats(stats);
+        
+        if (['sad', 'angry', 'anxious', 'lonely'].includes(demoEmotion.emotion)) {
+          if (demoEmotion.confidence > 0.7) {
+            addAlert(`Patient expressing ${demoEmotion.emotion} emotion`, 'warning');
+          }
+        }
+      }, 3000);
+    } else {
+      console.log('🎤 Starting speech analysis in REAL mode');
+      setIsAnalyzingSpeech(true);
+      speechAnalyzer.startListening((emotionData) => {
+        console.log('🎭 Speech emotion detected:', emotionData);
+        setCurrentSpeechEmotion(emotionData);
+        
+        const stats = speechAnalyzer.getEmotionStatistics();
+        setSpeechEmotionStats(stats);
+
+        if (['sad', 'angry', 'anxious', 'lonely'].includes(emotionData.emotion)) {
+          if (emotionData.confidence > 0.7) {
+            addAlert(`Patient expressing ${emotionData.emotion} emotion: "${emotionData.transcript}"`, 'alert');
+          }
+        }
+      });
+    }
+  };
+
+  const stopSpeechAnalysis = () => {
+    console.log('🛑 Stopping speech analysis');
+    if (speechAnalyzer) {
+      speechAnalyzer.stopListening();
+    }
+    if (demoIntervalRef.current) {
+      clearInterval(demoIntervalRef.current);
+      demoIntervalRef.current = null;
+    }
+    setIsAnalyzingSpeech(false);
+    setCurrentSpeechEmotion(null);
+  };
+
+  const toggleDemoMode = () => {
+    const newDemoMode = !demoMode;
+    console.log(`🔄 Switching to ${newDemoMode ? 'DEMO' : 'REAL'} mode`);
+    
+    stopSpeechAnalysis();
+    setDemoMode(newDemoMode);
+    
+    if (callActive && isConnected) {
+      setTimeout(() => {
+        startSpeechAnalysis();
+      }, 500);
+    }
+  };
+
   const startCall = async () => {
     if (!roomId.trim()) {
       alert('Please enter a room ID');
@@ -736,6 +832,19 @@ const EmotionVideoCallWithWebRTC = () => {
         ...prev,
         startTime: Date.now()
       }));
+
+      // Initialize speech emotion analyzer
+      const analyzer = new SpeechEmotionAnalyzer();
+      setSpeechAnalyzer(analyzer);
+      
+      const initialized = await analyzer.initialize(stream);
+      if (!initialized) {
+        console.warn('⚠️ Speech recognition not fully supported, using demo mode');
+        setDemoMode(true);
+      } else {
+        console.log('✅ Speech emotion analyzer initialized');
+        setDemoMode(false);
+      }
 
       connectToServer();
 
@@ -775,6 +884,14 @@ const EmotionVideoCallWithWebRTC = () => {
       socketRef.current.emit('leave-room', currentRoomId);
       socketRef.current.disconnect();
     }
+
+    // Cleanup speech analysis
+    stopSpeechAnalysis();
+    if (speechAnalyzer) {
+      speechAnalyzer.cleanup();
+      setSpeechAnalyzer(null);
+    }
+    setSpeechEmotionStats(null);
 
     setLocalStream(null);
     setRemoteStream(null);
@@ -1359,6 +1476,14 @@ const EmotionVideoCallWithWebRTC = () => {
                         </div>
                       </div>
                     )}
+                    {currentSpeechEmotion && isConnected && (
+                      <SpeechEmotionIndicator
+                        currentEmotion={currentSpeechEmotion.emotion}
+                        confidence={currentSpeechEmotion.confidence}
+                        transcript={currentSpeechEmotion.transcript}
+                        isDemo={demoMode}
+                      />
+                    )}
                   </div>
                 </div>
 
@@ -1410,11 +1535,28 @@ const EmotionVideoCallWithWebRTC = () => {
                       <PhoneOff className="w-6 h-6" />
                       End Call
                     </button>
+
+                    <button
+                      onClick={toggleDemoMode}
+                      className={`flex items-center gap-2 px-6 py-4 rounded-full font-semibold transition-colors shadow-lg ${
+                        demoMode
+                          ? 'bg-yellow-500 hover:bg-yellow-600 text-white'
+                          : 'bg-green-500 hover:bg-green-600 text-white'
+                      }`}
+                    >
+                      {demoMode ? '🎭 Demo Mode' : '🎤 Real Mode'}
+                    </button>
                   </div>
                 </div>
               </div>
 
               <div className="space-y-4">
+                <EnhancedStatisticsPanel
+                  statistics={callStatistics}
+                  speechEmotionStats={speechEmotionStats}
+                  isAnalyzingSpeech={isAnalyzingSpeech}
+                  demoMode={demoMode}
+                />
                 <div className="bg-white rounded-xl shadow-lg p-6">
                   <h3 className="font-bold text-lg mb-4">Alerts</h3>
                   {alerts.length === 0 ? (
