@@ -1,3 +1,26 @@
+/**
+ * Emotion Video Call with WebRTC
+ * 
+ * ✅ Features:
+ * - Real-time video calling with WebRTC
+ * - AssemblyAI transcription and sentiment analysis
+ * - Post-call analytics dashboard
+ * - Historical call tracking
+ * - Distress detection
+ * 
+ * ✅ AssemblyAI Integration:
+ * - Real-time speech-to-text
+ * - Sentiment analysis
+ * - Distress keyword detection
+ * - Post-call analytics
+ * 
+ * 📝 Required Environment Variables:
+ * - VITE_ASSEMBLYAI_API_KEY (for transcription & sentiment)
+ * - VITE_METERED_API_KEY (for TURN servers)
+ * - VITE_SERVER_URL (signaling server)
+ * - Firebase config variables
+ */
+
 import React, { useState, useRef, useEffect } from 'react';
 import { Camera, Mic, MicOff, Video, VideoOff, Phone, PhoneOff, AlertCircle, Heart, Frown, Smile, Meh, Copy, Check, TrendingUp, Clock, BarChart3, Wifi, WifiOff, Settings, Users, Calendar } from 'lucide-react';
 import io from 'socket.io-client';
@@ -1258,22 +1281,9 @@ const initializeAssemblyAI = async () => {
     }
 
     try {
-      // Get Claude API key if available
-      const apiKey = import.meta.env.VITE_CLAUDE_API_KEY;
-      
-      // Log API key status
-      if (apiKey) {
-        console.log('✅ Claude API Key Found!');
-        console.log('   First 20 chars:', apiKey.substring(0, 20) + '...');
-        console.log('   AI Insights: ENABLED 🤖');
-      } else {
-        console.log('ℹ️ Claude API Key Not Found');
-        console.log('   AI Insights: DISABLED');
-        console.log('   Using audio-only analysis');
-      }
-
       console.log('🎤 Initializing analyzer for REMOTE AUDIO (patient)');
-      const analyzer = new EnhancedAIEmotionAnalyzerRemote(apiKey);
+      // Note: Audio analysis for emotion detection (separate from AssemblyAI transcription)
+      const analyzer = new EnhancedAIEmotionAnalyzerRemote(null);
       const initialized = await analyzer.initialize(remoteStream);
 
       if (!initialized) {
