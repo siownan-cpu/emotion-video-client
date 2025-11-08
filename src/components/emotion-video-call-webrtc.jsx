@@ -16,7 +16,7 @@ const EmotionVideoCallWithWebRTC = () => {
   const [currentRoomId, setCurrentRoomId] = useState('');
   const [isConnected, setIsConnected] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [meteredApiKey, setMeteredApiKey] = useState(import.meta.env.VITE_METERED_API_KEY || '');
+  const [meteredApiKey, setMeteredApiKey] = useState(import.meta.env.VITE_METERED_API_KEY || '2ad5a09d363a45ccaf335c6dc36acf9cad87');
 
   const [availableDevices, setAvailableDevices] = useState({
     videoInputs: [],
