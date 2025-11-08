@@ -6,6 +6,12 @@ import EnhancedStatisticsPanel from './EnhancedStatisticsPanel';
 import SpeechEmotionIndicator from './SpeechEmotionIndicator';
 
 const EmotionVideoCallWithWebRTC = () => {
+  // User Authentication & Role
+  const [userRole, setUserRole] = useState(null); // 'superadmin', 'caregiver', 'standard'
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+
   const [callActive, setCallActive] = useState(false);
   const [localStream, setLocalStream] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
@@ -1069,36 +1075,33 @@ const EmotionVideoCallWithWebRTC = () => {
     }
 
     analysisIntervalRef.current = setInterval(() => {
-      const localEmotion = detectEmotion(localVideoRef.current, true);
-      const remoteEmotion = detectEmotion(remoteVideoRef.current, false);
+      // Only analyze emotions if user has permission (superadmin or caregiver)
+      if (canViewEmotions()) {
+        // Only analyze the remote user's (standard user's) emotions
+        const remoteEmotion = detectEmotion(remoteVideoRef.current, false);
 
-      if (localEmotion) {
-        setLocalEmotions(prev => ({
-          ...localEmotion,
-          history: [...prev.history.slice(-99), localEmotion]
-        }));
-      }
+        if (remoteEmotion) {
+          setRemoteEmotions(prev => ({
+            ...remoteEmotion,
+            history: [...prev.history.slice(-99), remoteEmotion]
+          }));
 
-      if (remoteEmotion) {
-        setRemoteEmotions(prev => ({
-          ...remoteEmotion,
-          history: [...prev.history.slice(-99), remoteEmotion]
-        }));
-
-        if (remoteEmotion.primary === 'sad' && remoteEmotion.confidence > 0.7) {
-          addAlert('Patient appears distressed', 'alert');
-        } else if (remoteEmotion.primary === 'angry' && remoteEmotion.confidence > 0.75) {
-          addAlert('Elevated tension detected', 'warning');
-        } else if (remoteEmotion.primary === 'fearful' && remoteEmotion.confidence > 0.7) {
-          addAlert('Patient may be anxious or fearful', 'alert');
+          // Alert caregivers/admins about concerning emotions
+          if (remoteEmotion.primary === 'sad' && remoteEmotion.confidence > 0.7) {
+            addAlert('User appears distressed', 'alert');
+          } else if (remoteEmotion.primary === 'angry' && remoteEmotion.confidence > 0.75) {
+            addAlert('Elevated tension detected', 'warning');
+          } else if (remoteEmotion.primary === 'fearful' && remoteEmotion.confidence > 0.7) {
+            addAlert('User may be anxious or fearful', 'alert');
+          }
         }
-      }
 
-      const sentimentScore = Math.random() * 2 - 1;
-      setSpeechSentiment({
-        score: sentimentScore,
-        detectedPhrase: sentimentScore < -0.5 ? 'Negative tone detected' : null
-      });
+        const sentimentScore = Math.random() * 2 - 1;
+        setSpeechSentiment({
+          score: sentimentScore,
+          detectedPhrase: sentimentScore < -0.5 ? 'Negative tone detected' : null
+        });
+      }
     }, 2000);
   };
 
@@ -1123,6 +1126,39 @@ const EmotionVideoCallWithWebRTC = () => {
     navigator.clipboard.writeText(currentRoomId);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  // Check if current user can view emotion analysis
+  const canViewEmotions = () => {
+    return userRole === 'superadmin' || userRole === 'caregiver';
+  };
+
+  // Handle login
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    
+    // TODO: Replace with actual Firebase authentication
+    // For now, simple demo logic based on email
+    if (loginEmail.includes('admin')) {
+      setUserRole('superadmin');
+      setIsAuthenticated(true);
+    } else if (loginEmail.includes('caregiver')) {
+      setUserRole('caregiver');
+      setIsAuthenticated(true);
+    } else {
+      setUserRole('standard');
+      setIsAuthenticated(true);
+    }
+  };
+
+  const handleLogout = () => {
+    setIsAuthenticated(false);
+    setUserRole(null);
+    setLoginEmail('');
+    setLoginPassword('');
+    if (callActive) {
+      endCall();
+    }
   };
 
   const getEmotionIcon = (emotion) => {
@@ -1215,8 +1251,71 @@ const EmotionVideoCallWithWebRTC = () => {
           <p className="text-gray-600">With TURN servers and detailed ICE statistics</p>
         </div>
 
-        {!callActive ? (
+        {/* Login Screen */}
+        {!isAuthenticated ? (
+          <div className="max-w-md mx-auto">
+            <div className="bg-white rounded-2xl shadow-xl p-8">
+              <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">Login</h2>
+              <form onSubmit={handleLogin} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Email
+                  </label>
+                  <input
+                    type="email"
+                    value={loginEmail}
+                    onChange={(e) => setLoginEmail(e.target.value)}
+                    placeholder="Enter your email"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Password
+                  </label>
+                  <input
+                    type="password"
+                    value={loginPassword}
+                    onChange={(e) => setLoginPassword(e.target.value)}
+                    placeholder="Enter your password"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    required
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-semibold py-3 px-6 rounded-lg transition-all shadow-lg"
+                >
+                  Login
+                </button>
+              </form>
+              <div className="mt-6 p-4 bg-gray-50 rounded-lg text-xs text-gray-600">
+                <p className="font-semibold mb-2">Demo Login:</p>
+                <p>• Superadmin: Use email with "admin" (e.g., admin@example.com)</p>
+                <p>• Caregiver: Use email with "caregiver" (e.g., caregiver@example.com)</p>
+                <p>• Standard User: Any other email</p>
+              </div>
+            </div>
+          </div>
+        ) : !callActive ? (
           <div className="max-w-md mx-auto space-y-4">
+            <div className="bg-white rounded-2xl shadow-xl p-6">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <p className="text-sm text-gray-600">Logged in as</p>
+                  <p className="font-semibold text-gray-800 capitalize">{userRole}</p>
+                  <p className="text-xs text-gray-500">{loginEmail}</p>
+                </div>
+                <button
+                  onClick={handleLogout}
+                  className="px-4 py-2 text-sm bg-red-100 hover:bg-red-200 text-red-700 rounded-lg transition-colors"
+                >
+                  Logout
+                </button>
+              </div>
+            </div>
+
             <div className="bg-white rounded-2xl shadow-xl p-8">
               <div className="mb-6">
                 <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -1382,6 +1481,11 @@ const EmotionVideoCallWithWebRTC = () => {
                   </div>
                 </div>
 
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-gray-600">Role:</span>
+                  <span className="font-semibold capitalize">{userRole}</span>
+                </div>
+
                 <button
                   onClick={() => setShowDeviceSettings(!showDeviceSettings)}
                   className="flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
@@ -1468,8 +1572,8 @@ const EmotionVideoCallWithWebRTC = () => {
               <div className="lg:col-span-2 space-y-4">
                 <div className="bg-white rounded-xl shadow-lg overflow-hidden">
                   <div className="bg-gradient-to-r from-purple-600 to-pink-600 text-white px-4 py-2 flex items-center justify-between">
-                    <span className="font-semibold">Patient</span>
-                    {isConnected && analyzing && (
+                    <span className="font-semibold">{canViewEmotions() ? 'User' : 'Remote Participant'}</span>
+                    {isConnected && analyzing && canViewEmotions() && (
                       <div className={`flex items-center gap-1 px-3 py-1 rounded-full ${getEmotionColor(remoteEmotions.primary)}`}>
                         {getEmotionIcon(remoteEmotions.primary)}
                         <span className="text-sm font-medium capitalize">{remoteEmotions.primary}</span>
@@ -1508,7 +1612,7 @@ const EmotionVideoCallWithWebRTC = () => {
 
                 <div className="bg-white rounded-xl shadow-lg overflow-hidden">
                   <div className="bg-gradient-to-r from-blue-600 to-cyan-600 text-white px-4 py-2">
-                    <span className="font-semibold">You (Caregiver)</span>
+                    <span className="font-semibold">You ({userRole === 'superadmin' ? 'Admin' : userRole === 'caregiver' ? 'Caregiver' : 'User'})</span>
                   </div>
                   <div className="relative bg-gray-900 aspect-video">
                     <video
@@ -1570,26 +1674,30 @@ const EmotionVideoCallWithWebRTC = () => {
               </div>
 
               <div className="space-y-4">
-                <EnhancedStatisticsPanel
-                  statistics={callStatistics}
-                  speechEmotionStats={speechEmotionStats}
-                  isAnalyzingSpeech={isAnalyzingSpeech}
-                  demoMode={demoMode}
-                />
-                <div className="bg-white rounded-xl shadow-lg p-6">
-                  <h3 className="font-bold text-lg mb-4">Alerts</h3>
-                  {alerts.length === 0 ? (
-                    <p className="text-gray-500 text-sm text-center py-4">No alerts</p>
-                  ) : (
-                    <div className="space-y-2 max-h-48 overflow-y-auto">
-                      {alerts.slice(-5).reverse().map((alert) => (
-                        <div key={alert.id} className="p-2 bg-yellow-50 border-l-4 border-yellow-500 rounded text-sm">
-                          {alert.message}
+                {canViewEmotions() && (
+                  <>
+                    <EnhancedStatisticsPanel
+                      statistics={callStatistics}
+                      speechEmotionStats={speechEmotionStats}
+                      isAnalyzingSpeech={isAnalyzingSpeech}
+                      demoMode={demoMode}
+                    />
+                    <div className="bg-white rounded-xl shadow-lg p-6">
+                      <h3 className="font-bold text-lg mb-4">Alerts</h3>
+                      {alerts.length === 0 ? (
+                        <p className="text-gray-500 text-sm text-center py-4">No alerts</p>
+                      ) : (
+                        <div className="space-y-2 max-h-48 overflow-y-auto">
+                          {alerts.slice(-5).reverse().map((alert) => (
+                            <div key={alert.id} className="p-2 bg-yellow-50 border-l-4 border-yellow-500 rounded text-sm">
+                              {alert.message}
+                            </div>
+                          ))}
                         </div>
-                      ))}
+                      )}
                     </div>
-                  )}
-                </div>
+                  </>
+                )}
               </div>
             </div>
           </>
