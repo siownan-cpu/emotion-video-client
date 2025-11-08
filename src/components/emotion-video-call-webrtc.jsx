@@ -1403,7 +1403,7 @@ const EmotionVideoCallWithWebRTC = () => {
 
                 <div className="flex items-center gap-2 text-sm">
                   <span className="text-gray-600">Role:</span>
-                  <span className="font-semibold capitalize">{userRole}</span>
+                  <span className="font-semibold capitalize">{userProfile?.role || 'user'}</span>
                 </div>
 
                 <button
