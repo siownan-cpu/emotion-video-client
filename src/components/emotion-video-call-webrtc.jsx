@@ -1,16 +1,15 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Camera, Mic, MicOff, Video, VideoOff, Phone, PhoneOff, AlertCircle, Heart, Frown, Smile, Meh, Copy, Check, TrendingUp, Clock, BarChart3, Wifi, WifiOff, Settings } from 'lucide-react';
+import { Camera, Mic, MicOff, Video, VideoOff, Phone, PhoneOff, AlertCircle, Heart, Frown, Smile, Meh, Copy, Check, TrendingUp, Clock, BarChart3, Wifi, WifiOff, Settings, Users } from 'lucide-react';
 import io from 'socket.io-client';
 import SpeechEmotionAnalyzer from '../utils/SpeechEmotionAnalyzer';
 import EnhancedStatisticsPanel from './EnhancedStatisticsPanel';
 import SpeechEmotionIndicator from './SpeechEmotionIndicator';
+import UserRoleManagement from './UserRoleManagement';
+import { useAuth } from '../contexts/AuthContext';
 
 const EmotionVideoCallWithWebRTC = () => {
-  // User Authentication & Role
-  const [userRole, setUserRole] = useState(null); // 'superadmin', 'caregiver', 'standard'
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [loginEmail, setLoginEmail] = useState('');
-  const [loginPassword, setLoginPassword] = useState('');
+  // Get user data from AuthContext
+  const { userProfile, isAdmin } = useAuth();
 
   const [callActive, setCallActive] = useState(false);
   const [localStream, setLocalStream] = useState(null);
@@ -96,6 +95,7 @@ const EmotionVideoCallWithWebRTC = () => {
   const [speechEmotionStats, setSpeechEmotionStats] = useState(null);
   const [isAnalyzingSpeech, setIsAnalyzingSpeech] = useState(false);
   const [demoMode, setDemoMode] = useState(false);
+  const [showRoleManagement, setShowRoleManagement] = useState(false);
 
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
@@ -1130,35 +1130,7 @@ const EmotionVideoCallWithWebRTC = () => {
 
   // Check if current user can view emotion analysis
   const canViewEmotions = () => {
-    return userRole === 'superadmin' || userRole === 'caregiver';
-  };
-
-  // Handle login
-  const handleLogin = async (e) => {
-    e.preventDefault();
-    
-    // TODO: Replace with actual Firebase authentication
-    // For now, simple demo logic based on email
-    if (loginEmail.includes('admin')) {
-      setUserRole('superadmin');
-      setIsAuthenticated(true);
-    } else if (loginEmail.includes('caregiver')) {
-      setUserRole('caregiver');
-      setIsAuthenticated(true);
-    } else {
-      setUserRole('standard');
-      setIsAuthenticated(true);
-    }
-  };
-
-  const handleLogout = () => {
-    setIsAuthenticated(false);
-    setUserRole(null);
-    setLoginEmail('');
-    setLoginPassword('');
-    if (callActive) {
-      endCall();
-    }
+    return userProfile?.role === 'superadmin' || userProfile?.role === 'caregiver';
   };
 
   const getEmotionIcon = (emotion) => {
@@ -1246,76 +1218,24 @@ const EmotionVideoCallWithWebRTC = () => {
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-gray-800 mb-2 flex items-center justify-center gap-2">
             <Heart className="w-10 h-10 text-red-500" />
-            Emotion Video Call (Enhanced Debug)
+            Emotion Video Call
           </h1>
-          <p className="text-gray-600">With TURN servers and detailed ICE statistics</p>
+          <p className="text-gray-600">Empathetic video communication with emotion analytics</p>
+          
+          {/* Superadmin: Manage Users Button */}
+          {userProfile?.role === 'superadmin' && !callActive && (
+            <button
+              onClick={() => setShowRoleManagement(true)}
+              className="mt-4 inline-flex items-center gap-2 px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-semibold transition-colors shadow-lg"
+            >
+              <Users className="w-5 h-5" />
+              Manage User Roles
+            </button>
+          )}
         </div>
 
-        {/* Login Screen */}
-        {!isAuthenticated ? (
-          <div className="max-w-md mx-auto">
-            <div className="bg-white rounded-2xl shadow-xl p-8">
-              <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">Login</h2>
-              <form onSubmit={handleLogin} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Email
-                  </label>
-                  <input
-                    type="email"
-                    value={loginEmail}
-                    onChange={(e) => setLoginEmail(e.target.value)}
-                    placeholder="Enter your email"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Password
-                  </label>
-                  <input
-                    type="password"
-                    value={loginPassword}
-                    onChange={(e) => setLoginPassword(e.target.value)}
-                    placeholder="Enter your password"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    required
-                  />
-                </div>
-                <button
-                  type="submit"
-                  className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-semibold py-3 px-6 rounded-lg transition-all shadow-lg"
-                >
-                  Login
-                </button>
-              </form>
-              <div className="mt-6 p-4 bg-gray-50 rounded-lg text-xs text-gray-600">
-                <p className="font-semibold mb-2">Demo Login:</p>
-                <p>• Superadmin: Use email with "admin" (e.g., admin@example.com)</p>
-                <p>• Caregiver: Use email with "caregiver" (e.g., caregiver@example.com)</p>
-                <p>• Standard User: Any other email</p>
-              </div>
-            </div>
-          </div>
-        ) : !callActive ? (
+        {!callActive ? (
           <div className="max-w-md mx-auto space-y-4">
-            <div className="bg-white rounded-2xl shadow-xl p-6">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <p className="text-sm text-gray-600">Logged in as</p>
-                  <p className="font-semibold text-gray-800 capitalize">{userRole}</p>
-                  <p className="text-xs text-gray-500">{loginEmail}</p>
-                </div>
-                <button
-                  onClick={handleLogout}
-                  className="px-4 py-2 text-sm bg-red-100 hover:bg-red-200 text-red-700 rounded-lg transition-colors"
-                >
-                  Logout
-                </button>
-              </div>
-            </div>
-
             <div className="bg-white rounded-2xl shadow-xl p-8">
               <div className="mb-6">
                 <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -1612,7 +1532,9 @@ const EmotionVideoCallWithWebRTC = () => {
 
                 <div className="bg-white rounded-xl shadow-lg overflow-hidden">
                   <div className="bg-gradient-to-r from-blue-600 to-cyan-600 text-white px-4 py-2">
-                    <span className="font-semibold">You ({userRole === 'superadmin' ? 'Admin' : userRole === 'caregiver' ? 'Caregiver' : 'User'})</span>
+                    <span className="font-semibold">
+                      You ({userProfile?.role === 'superadmin' ? 'Admin' : userProfile?.role === 'caregiver' ? 'Caregiver' : 'User'})
+                    </span>
                   </div>
                   <div className="relative bg-gray-900 aspect-video">
                     <video
@@ -1703,6 +1625,18 @@ const EmotionVideoCallWithWebRTC = () => {
           </>
         )}
       </div>
+
+      {/* Role Management Modal */}
+      {showRoleManagement && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="max-w-4xl w-full">
+            <UserRoleManagement
+              currentUserRole={userProfile?.role}
+              onClose={() => setShowRoleManagement(false)}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };
