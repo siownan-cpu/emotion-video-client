@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Camera, Mic, MicOff, Video, VideoOff, Phone, PhoneOff, AlertCircle, Heart, Frown, Smile, Meh, Copy, Check, TrendingUp, Clock, BarChart3, Wifi, WifiOff, Settings, Users } from 'lucide-react';
 import io from 'socket.io-client';
-import SpeechEmotionAnalyzer from '../utils/SpeechEmotionAnalyzer';
+import EnhancedAIEmotionAnalyzer from '../utils/EnhancedAIEmotionAnalyzer';
 import EnhancedStatisticsPanel from './EnhancedStatisticsPanel';
 import SpeechEmotionIndicator from './SpeechEmotionIndicator';
 import UserRoleManagement from './UserRoleManagement';
@@ -525,6 +525,13 @@ const EmotionVideoCallWithWebRTC = () => {
         startAnalysis();
         startStatisticsTracking();
         
+        // 🎤 Initialize speech analyzer on REMOTE stream (patient's audio)
+        if (canViewEmotions()) {
+          initializeSpeechAnalyzer(remoteStreamReceived);
+        } else {
+          console.log('ℹ️ Speech analysis not enabled for this user role');
+        }
+        
         event.track.onended = () => {
           console.log('⚠️ Track ended:', event.track.kind);
         };
@@ -826,19 +833,6 @@ const EmotionVideoCallWithWebRTC = () => {
     }
   };
 
-  const stopSpeechAnalysis = () => {
-    console.log('🛑 Stopping speech analysis');
-    if (speechAnalyzer) {
-      speechAnalyzer.stopListening();
-    }
-    if (demoIntervalRef.current) {
-      clearInterval(demoIntervalRef.current);
-      demoIntervalRef.current = null;
-    }
-    setIsAnalyzingSpeech(false);
-    setCurrentSpeechEmotion(null);
-  };
-
   const toggleDemoMode = () => {
     const newDemoMode = !demoMode;
     console.log(`🔄 Switching to ${newDemoMode ? 'DEMO' : 'REAL'} mode`);
@@ -888,18 +882,8 @@ const EmotionVideoCallWithWebRTC = () => {
         startTime: Date.now()
       }));
 
-      // Initialize speech emotion analyzer
-      const analyzer = new SpeechEmotionAnalyzer();
-      setSpeechAnalyzer(analyzer);
-      
-      const initialized = await analyzer.initialize(stream);
-      if (!initialized) {
-        console.warn('⚠️ Speech recognition not fully supported, using demo mode');
-        setDemoMode(true);
-      } else {
-        console.log('✅ Speech emotion analyzer initialized');
-        setDemoMode(false);
-      }
+      // Speech analyzer will be initialized when remote stream connects
+      console.log('📞 Call started, waiting for remote stream to initialize speech analysis');
 
       connectToServer();
 
@@ -1174,6 +1158,81 @@ const EmotionVideoCallWithWebRTC = () => {
     navigator.clipboard.writeText(currentRoomId);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  // Initialize speech analyzer with AI
+  const initializeSpeechAnalyzer = async (stream) => {
+    if (!stream) {
+      console.warn('⚠️ No stream provided for speech analysis');
+      return;
+    }
+
+    try {
+      // Get Claude API key if available
+      const apiKey = import.meta.env.VITE_CLAUDE_API_KEY;
+      
+      // Log API key status
+      if (apiKey) {
+        console.log('✅ Claude API Key Found!');
+        console.log('   First 20 chars:', apiKey.substring(0, 20) + '...');
+        console.log('   AI Insights: ENABLED 🤖');
+      } else {
+        console.log('ℹ️ Claude API Key Not Found');
+        console.log('   AI Insights: DISABLED');
+        console.log('   Using enhanced analysis without AI insights');
+      }
+
+      const analyzer = new EnhancedAIEmotionAnalyzer(apiKey);
+      const initialized = await analyzer.initialize(stream);
+
+      if (!initialized) {
+        console.warn('⚠️ Speech recognition not fully supported, using demo mode');
+        setDemoMode(true);
+      } else {
+        console.log('✅ Enhanced AI speech analyzer initialized on REMOTE stream');
+        setDemoMode(false);
+        setSpeechAnalyzer(analyzer);
+        
+        // Start listening to remote audio
+        analyzer.startListening((emotionData) => {
+          console.log('📊 Speech Emotion Detection Result:');
+          console.log('   Emotion:', emotionData.emotion);
+          console.log('   Confidence:', emotionData.confidence);
+          console.log('   Transcript:', emotionData.transcript);
+          console.log('   Has AI Insight:', !!emotionData.aiInsight);
+          console.log('   Voice Metrics:', emotionData.voiceMetrics);
+          
+          // Show AI insight if available
+          if (emotionData.aiInsight) {
+            console.log('🤖 AI Analysis:');
+            console.log('   AI Emotion:', emotionData.aiInsight.emotion);
+            console.log('   AI Confidence:', emotionData.aiInsight.confidence);
+            console.log('   AI Reasoning:', emotionData.aiInsight.reasoning);
+          }
+          
+          setCurrentSpeechEmotion(emotionData);
+          
+          // Update statistics
+          const stats = analyzer.getEmotionStatistics();
+          setSpeechEmotionStats(stats);
+        });
+
+        setIsAnalyzingSpeech(true);
+        console.log('🎤 Speech analysis started on REMOTE patient audio');
+      }
+    } catch (error) {
+      console.error('❌ Error initializing speech analyzer:', error);
+      addAlert('Failed to initialize speech analysis', 'warning');
+    }
+  };
+
+  // Stop speech analysis
+  const stopSpeechAnalysis = () => {
+    if (speechAnalyzer) {
+      speechAnalyzer.stopListening();
+      setIsAnalyzingSpeech(false);
+      console.log('🛑 Stopped speech analysis');
+    }
   };
 
   // Check if current user can view emotion analysis
