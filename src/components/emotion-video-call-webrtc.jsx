@@ -6,6 +6,9 @@ import EnhancedStatisticsPanel from './EnhancedStatisticsPanel';
 import SpeechEmotionIndicator from './SpeechEmotionIndicator';
 import UserRoleManagement from './UserRoleManagement';
 import { useAuth } from '../contexts/AuthContext';
+import AssemblyAIService from '../services/AssemblyAIService';
+import PostCallDashboard from './PostCallDashboard';
+import CallHistoryViewer from './CallHistoryViewer';
 
 const EmotionVideoCallWithWebRTC = () => {
   // Get user data from AuthContext
@@ -86,6 +89,14 @@ const EmotionVideoCallWithWebRTC = () => {
     engagementScore: 0
   });
 
+  // AssemblyAI integration
+  const [assemblyAI, setAssemblyAI] = useState(null);
+  const [assemblyConnected, setAssemblyConnected] = useState(false);
+  const [conversationData, setConversationData] = useState(null);
+  const [showPostCallDashboard, setShowPostCallDashboard] = useState(false);
+  const [showCallHistory, setShowCallHistory] = useState(false);
+  const [realtimeInsights, setRealtimeInsights] = useState([]);
+  
   const [alerts, setAlerts] = useState([]);
   const [speechSentiment, setSpeechSentiment] = useState({ score: 0, text: '' });
 
@@ -524,7 +535,19 @@ const EmotionVideoCallWithWebRTC = () => {
         setAnalyzing(true);
         startAnalysis();
         startStatisticsTracking();
-        
+
+        // ✨ Start AssemblyAI transcription
+        if (assemblyAI && remoteStreamReceived) {
+          assemblyAI.startRealtimeTranscription(remoteStreamReceived)
+            .then(() => {
+            setAssemblyConnected(true);
+            console.log('✅ AssemblyAI transcription started');
+          })
+          .catch(error => {
+            console.error('❌ AssemblyAI error:', error);
+          });
+        }
+                
         // 🎤 Initialize speech analyzer on REMOTE stream (patient's audio)
         if (canViewEmotions()) {
           initializeSpeechAnalyzer(remoteStreamReceived);
@@ -880,6 +903,7 @@ const EmotionVideoCallWithWebRTC = () => {
       setCallStatistics(prev => ({
         ...prev,
         startTime: Date.now()
+       
       }));
 
       // Speech analyzer will be initialized when remote stream connects
@@ -896,10 +920,34 @@ const EmotionVideoCallWithWebRTC = () => {
       console.error('❌ Error accessing media:', error);
       alert('Could not access camera/microphone: ' + error.message);
     }
+
+    // ✨ Initialize AssemblyAI
+    const service = await initializeAssemblyAI();
+    
+    // Wait for remote stream to be available
+    // We'll start transcription when peer connects
+
+  } catch (error) {
+    console.error('❌ Error:', error);
+  }    
+  
   };
 
   const endCall = () => {
     console.log('📞 Ending call');
+
+    // ✨ Get analytics from AssemblyAI
+    let analytics = null;
+    if (assemblyAI && assemblyConnected) {
+      try {
+        assemblyAI.stopRealtimeTranscription();
+        analytics = assemblyAI.getConversationAnalytics();
+        setConversationData(analytics);
+        console.log('✅ Analytics retrieved:', analytics);
+      } catch (error) {
+        console.error('❌ Error getting analytics:', error);
+      }
+    }
     
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
@@ -951,6 +999,11 @@ const EmotionVideoCallWithWebRTC = () => {
       peer: 'disconnected',
       ice: 'new'
     });
+
+    // ✨ Show dashboard for caregivers/superadmins
+    if (analytics && isAdmin()) {
+      setShowPostCallDashboard(true);
+    } 
   };
 
   const toggleVideo = () => {
@@ -1160,6 +1213,51 @@ const EmotionVideoCallWithWebRTC = () => {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  // Initialize AssemblyAI
+const initializeAssemblyAI = async () => {
+  const apiKey = import.meta.env.VITE_ASSEMBLYAI_API_KEY;
+
+  if (!apiKey) {
+    console.warn('⚠️ AssemblyAI API key not configured');
+    return null;
+  }
+
+  try {
+    const service = new AssemblyAIService(apiKey);
+    
+    // Set up callbacks
+    service.onMessage((message) => {
+      console.log('💬 Transcript:', message.text);
+    });
+
+    service.onSentiment((sentiment) => {
+      console.log('😊 Sentiment:', sentiment.suggested, sentiment.polarity.score);
+      
+      if (sentiment.distress) {
+        console.warn('⚠️ Distress detected!');
+        addAlert('Distress indicators detected', 'warning');
+      }
+
+      setRealtimeInsights(prev => [...prev.slice(-9), {
+        type: 'sentiment',
+        text: sentiment.text,
+        sentiment: sentiment.suggested,
+        score: sentiment.polarity.score,
+        distress: sentiment.distress,
+        timestamp: Date.now(),
+      }]);
+    });
+
+    setAssemblyAI(service);
+    console.log('✅ AssemblyAI initialized');
+    return service;
+  } catch (error) {
+    console.error('❌ AssemblyAI initialization failed:', error);
+    return null;
+  }
+};
+
+  
   // Initialize speech analyzer with AI - for REMOTE audio only
   const initializeSpeechAnalyzer = async (remoteStream) => {
     if (!remoteStream) {
@@ -1746,6 +1844,65 @@ const EmotionVideoCallWithWebRTC = () => {
           </div>
         </div>
       )}
+
+      {/* Post-call dashboard */}
+{showPostCallDashboard && conversationData && (
+  <PostCallDashboard
+    conversationData={conversationData}
+    userProfile={userProfile}
+    patientUserId={remotePeerIdRef.current}
+    onClose={() => setShowPostCallDashboard(false)}
+    onAssignCaregiver={() => {
+      alert('Caregiver assignment - integrate with your system');
+    }}
+  />
+)}
+
+{/* Call history viewer */}
+{showCallHistory && (
+  <CallHistoryViewer
+    patientUserId={remotePeerIdRef.current}
+    onClose={() => setShowCallHistory(false)}
+  />
+)}
+
+{/* View history button */}
+{callActive && isConnected && isAdmin() && (
+  <button
+    onClick={() => setShowCallHistory(true)}
+    className="fixed bottom-4 right-4 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg shadow-lg"
+  >
+    <Calendar className="w-4 h-4 inline mr-2" />
+    View History
+  </button>
+)}
+
+  {/* Real-time insights */}
+  {realtimeInsights.length > 0 && (
+    <div className="fixed top-20 right-4 w-80 max-h-96 overflow-y-auto space-y-2">
+      {realtimeInsights.slice(-5).map((insight, idx) => (
+        <div
+          key={idx}
+          className={`p-3 rounded-lg shadow-lg ${
+            insight.distress
+              ? 'bg-red-50 border-l-4 border-red-500'
+              : insight.sentiment === 'positive'
+              ? 'bg-green-50 border-l-4 border-green-500'
+              : insight.sentiment === 'negative'
+              ? 'bg-orange-50 border-l-4 border-orange-500'
+              : 'bg-gray-50 border-l-4 border-gray-500'
+          }`}
+        >
+          <div className="text-xs font-semibold mb-1 capitalize">
+            {insight.sentiment}
+            {insight.distress && ' ⚠️ Distress'}
+          </div>
+          <div className="text-sm text-gray-700">{insight.text}</div>
+        </div>
+      ))}
+    </div>
+  )}
+      
     </div>
   );
 };
