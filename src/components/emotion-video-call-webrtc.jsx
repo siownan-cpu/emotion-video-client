@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Camera, Mic, MicOff, Video, VideoOff, Phone, PhoneOff, AlertCircle, Heart, Frown, Smile, Meh, Copy, Check, TrendingUp, Clock, BarChart3, Wifi, WifiOff, Settings, Users } from 'lucide-react';
 import io from 'socket.io-client';
-import EnhancedAIEmotionAnalyzer from '../utils/EnhancedAIEmotionAnalyzer';
+import EnhancedAIEmotionAnalyzerRemote from '../utils/EnhancedAIEmotionAnalyzerRemote';
 import EnhancedStatisticsPanel from './EnhancedStatisticsPanel';
 import SpeechEmotionIndicator from './SpeechEmotionIndicator';
 import UserRoleManagement from './UserRoleManagement';
@@ -1160,10 +1160,10 @@ const EmotionVideoCallWithWebRTC = () => {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // Initialize speech analyzer with AI
-  const initializeSpeechAnalyzer = async (stream) => {
-    if (!stream) {
-      console.warn('⚠️ No stream provided for speech analysis');
+  // Initialize speech analyzer with AI - for REMOTE audio only
+  const initializeSpeechAnalyzer = async (remoteStream) => {
+    if (!remoteStream) {
+      console.warn('⚠️ No remote stream provided for speech analysis');
       return;
     }
 
@@ -1179,32 +1179,34 @@ const EmotionVideoCallWithWebRTC = () => {
       } else {
         console.log('ℹ️ Claude API Key Not Found');
         console.log('   AI Insights: DISABLED');
-        console.log('   Using enhanced analysis without AI insights');
+        console.log('   Using audio-only analysis');
       }
 
-      const analyzer = new EnhancedAIEmotionAnalyzer(apiKey);
-      const initialized = await analyzer.initialize(stream);
+      console.log('🎤 Initializing analyzer for REMOTE AUDIO (patient)');
+      const analyzer = new EnhancedAIEmotionAnalyzerRemote(apiKey);
+      const initialized = await analyzer.initialize(remoteStream);
 
       if (!initialized) {
-        console.warn('⚠️ Speech recognition not fully supported, using demo mode');
+        console.warn('⚠️ Audio analysis not supported');
         setDemoMode(true);
       } else {
-        console.log('✅ Enhanced AI speech analyzer initialized on REMOTE stream');
+        console.log('✅ Remote audio analyzer initialized successfully');
+        console.log('   Analyzing: PATIENT audio (remote stream)');
+        console.log('   NOT analyzing: Caregiver audio (local stream)');
         setDemoMode(false);
         setSpeechAnalyzer(analyzer);
         
         // Start listening to remote audio
         analyzer.startListening((emotionData) => {
-          console.log('📊 Speech Emotion Detection Result:');
+          console.log('📊 REMOTE Patient Emotion Detection:');
           console.log('   Emotion:', emotionData.emotion);
           console.log('   Confidence:', emotionData.confidence);
           console.log('   Transcript:', emotionData.transcript);
-          console.log('   Has AI Insight:', !!emotionData.aiInsight);
           console.log('   Voice Metrics:', emotionData.voiceMetrics);
           
           // Show AI insight if available
           if (emotionData.aiInsight) {
-            console.log('🤖 AI Analysis:');
+            console.log('🤖 AI Analysis from Remote Audio:');
             console.log('   AI Emotion:', emotionData.aiInsight.emotion);
             console.log('   AI Confidence:', emotionData.aiInsight.confidence);
             console.log('   AI Reasoning:', emotionData.aiInsight.reasoning);
@@ -1218,10 +1220,10 @@ const EmotionVideoCallWithWebRTC = () => {
         });
 
         setIsAnalyzingSpeech(true);
-        console.log('🎤 Speech analysis started on REMOTE patient audio');
+        console.log('🎤 Speech analysis ACTIVE on REMOTE patient audio');
       }
     } catch (error) {
-      console.error('❌ Error initializing speech analyzer:', error);
+      console.error('❌ Error initializing remote audio analyzer:', error);
       addAlert('Failed to initialize speech analysis', 'warning');
     }
   };
