@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { auth, db } from '../firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 
 const Dashboard = () => {
   const navigate = useNavigate();
@@ -13,18 +13,9 @@ const Dashboard = () => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         setUser(user);
-        const userDocRef = doc(db, 'users', user.uid);
-        const userDoc = await getDoc(userDocRef);
+        const userDoc = await getDoc(doc(db, 'users', user.uid));
         if (userDoc.exists()) {
           setUserRole(userDoc.data().role);
-        } else {
-          // If the user exists in Auth but not Firestore, create the document.
-          const newUserRole = user.email === 'siownan@gmail.com' ? 'superadmin' : 'standard';
-          await setDoc(userDocRef, {
-            email: user.email,
-            role: newUserRole,
-          });
-          setUserRole(newUserRole);
         }
       } else {
         setUser(null);
