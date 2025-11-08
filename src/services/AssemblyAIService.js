@@ -44,13 +44,21 @@ class AssemblyAIService {
 
       this.websocket.onerror = (error) => {
         console.error('❌ AssemblyAI WebSocket error:', error);
+        console.error('   ReadyState:', this.websocket?.readyState);
+        console.error('   URL:', this.websocket?.url);
         this.isConnected = false;
         reject(error);
       };
 
-      this.websocket.onclose = () => {
+      this.websocket.onclose = (event) => {
         console.log('🔌 AssemblyAI WebSocket closed');
+        console.log('   Code:', event.code, 'Reason:', event.reason);
         this.isConnected = false;
+        
+        // If closed unexpectedly, try to reconnect
+        if (event.code !== 1000 && event.code !== 1001) {
+          console.warn('⚠️ Unexpected close, connection may have failed');
+        }
       };
     });
   }
