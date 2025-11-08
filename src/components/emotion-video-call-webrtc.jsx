@@ -174,92 +174,140 @@ const EmotionVideoCallWithWebRTC = () => {
   const changeVideoDevice = async (deviceId) => {
     console.log('📹 Changing video device to:', deviceId);
 
-    setSelectedDevices(prev => ({
-      ...prev,
-      videoDeviceId: deviceId
-    }));
+    if (!localStreamRef.current || !callActive) {
+      // Just update the selection if not in a call
+      setSelectedDevices(prev => ({
+        ...prev,
+        videoDeviceId: deviceId
+      }));
+      return;
+    }
 
-    if (localStreamRef.current && callActive) {
-      try {
-        const newStream = await navigator.mediaDevices.getUserMedia({
-          video: { deviceId: { exact: deviceId } },
-          audio: { deviceId: { exact: selectedDevices.audioDeviceId } }
-        });
+    try {
+      // Get current audio device ID
+      const currentAudioDeviceId = localStreamRef.current.getAudioTracks()[0]?.getSettings()?.deviceId || 
+                                     selectedDevices.audioDeviceId;
 
-        if (peerConnectionRef.current) {
-          const videoTrack = newStream.getVideoTracks()[0];
-          const sender = peerConnectionRef.current
-            .getSenders()
-            .find(s => s.track && s.track.kind === 'video');
+      const newStream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: { exact: deviceId } },
+        audio: { deviceId: currentAudioDeviceId ? { exact: currentAudioDeviceId } : true }
+      });
 
-          if (sender) {
-            await sender.replaceTrack(videoTrack);
-            console.log('✅ Video track replaced in peer connection');
-          }
+      // Update the video track in peer connection
+      if (peerConnectionRef.current) {
+        const videoTrack = newStream.getVideoTracks()[0];
+        const sender = peerConnectionRef.current
+          .getSenders()
+          .find(s => s.track && s.track.kind === 'video');
+
+        if (sender) {
+          await sender.replaceTrack(videoTrack);
+          console.log('✅ Video track replaced in peer connection');
         }
-
-        const oldVideoTrack = localStreamRef.current.getVideoTracks()[0];
-        if (oldVideoTrack) {
-          oldVideoTrack.stop();
-        }
-
-        localStreamRef.current.removeTrack(localStreamRef.current.getVideoTracks()[0]);
-        localStreamRef.current.addTrack(videoTrack);
-
-        setLocalStream(newStream);
-        localStreamRef.current = newStream;
-
-        addAlert('Camera changed successfully', 'info');
-      } catch (error) {
-        console.error('❌ Error changing video device:', error);
-        addAlert('Failed to change camera', 'alert');
       }
+
+      // Stop old video track
+      const oldVideoTrack = localStreamRef.current.getVideoTracks()[0];
+      if (oldVideoTrack) {
+        oldVideoTrack.stop();
+      }
+
+      // Keep the audio track from old stream
+      const oldAudioTrack = localStreamRef.current.getAudioTracks()[0];
+      
+      // Create a new combined stream
+      const combinedStream = new MediaStream([
+        newStream.getVideoTracks()[0],
+        oldAudioTrack
+      ]);
+
+      // Stop the audio track from new stream (we're using the old one)
+      newStream.getAudioTracks().forEach(track => track.stop());
+
+      setLocalStream(combinedStream);
+      localStreamRef.current = combinedStream;
+
+      // Update selected devices state
+      setSelectedDevices(prev => ({
+        ...prev,
+        videoDeviceId: deviceId
+      }));
+
+      addAlert('Camera changed successfully', 'info');
+      console.log('✅ Camera changed successfully');
+    } catch (error) {
+      console.error('❌ Error changing video device:', error);
+      addAlert('Failed to change camera: ' + error.message, 'alert');
     }
   };
 
   const changeAudioDevice = async (deviceId) => {
     console.log('🎤 Changing audio device to:', deviceId);
 
-    setSelectedDevices(prev => ({
-      ...prev,
-      audioDeviceId: deviceId
-    }));
+    if (!localStreamRef.current || !callActive) {
+      // Just update the selection if not in a call
+      setSelectedDevices(prev => ({
+        ...prev,
+        audioDeviceId: deviceId
+      }));
+      return;
+    }
 
-    if (localStreamRef.current && callActive) {
-      try {
-        const newStream = await navigator.mediaDevices.getUserMedia({
-          video: { deviceId: { exact: selectedDevices.videoDeviceId } },
-          audio: { deviceId: { exact: deviceId } }
-        });
+    try {
+      // Get current video device ID
+      const currentVideoDeviceId = localStreamRef.current.getVideoTracks()[0]?.getSettings()?.deviceId || 
+                                     selectedDevices.videoDeviceId;
 
-        if (peerConnectionRef.current) {
-          const audioTrack = newStream.getAudioTracks()[0];
-          const sender = peerConnectionRef.current
-            .getSenders()
-            .find(s => s.track && s.track.kind === 'audio');
+      const newStream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: currentVideoDeviceId ? { exact: currentVideoDeviceId } : true },
+        audio: { deviceId: { exact: deviceId } }
+      });
 
-          if (sender) {
-            await sender.replaceTrack(audioTrack);
-            console.log('✅ Audio track replaced in peer connection');
-          }
+      // Update the audio track in peer connection
+      if (peerConnectionRef.current) {
+        const audioTrack = newStream.getAudioTracks()[0];
+        const sender = peerConnectionRef.current
+          .getSenders()
+          .find(s => s.track && s.track.kind === 'audio');
+
+        if (sender) {
+          await sender.replaceTrack(audioTrack);
+          console.log('✅ Audio track replaced in peer connection');
         }
-
-        const oldAudioTrack = localStreamRef.current.getAudioTracks()[0];
-        if (oldAudioTrack) {
-          oldAudioTrack.stop();
-        }
-
-        localStreamRef.current.removeTrack(localStreamRef.current.getAudioTracks()[0]);
-        localStreamRef.current.addTrack(audioTrack);
-
-        setLocalStream(newStream);
-        localStreamRef.current = newStream;
-
-        addAlert('Microphone changed successfully', 'info');
-      } catch (error) {
-        console.error('❌ Error changing audio device:', error);
-        addAlert('Failed to change microphone', 'alert');
       }
+
+      // Stop old audio track
+      const oldAudioTrack = localStreamRef.current.getAudioTracks()[0];
+      if (oldAudioTrack) {
+        oldAudioTrack.stop();
+      }
+
+      // Keep the video track from old stream
+      const oldVideoTrack = localStreamRef.current.getVideoTracks()[0];
+      
+      // Create a new combined stream
+      const combinedStream = new MediaStream([
+        oldVideoTrack,
+        newStream.getAudioTracks()[0]
+      ]);
+
+      // Stop the video track from new stream (we're using the old one)
+      newStream.getVideoTracks().forEach(track => track.stop());
+
+      setLocalStream(combinedStream);
+      localStreamRef.current = combinedStream;
+
+      // Update selected devices state
+      setSelectedDevices(prev => ({
+        ...prev,
+        audioDeviceId: deviceId
+      }));
+
+      addAlert('Microphone changed successfully', 'info');
+      console.log('✅ Microphone changed successfully');
+    } catch (error) {
+      console.error('❌ Error changing audio device:', error);
+      addAlert('Failed to change microphone: ' + error.message, 'alert');
     }
   };
 
