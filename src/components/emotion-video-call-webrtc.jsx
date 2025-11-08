@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Camera, Mic, MicOff, Video, VideoOff, Phone, PhoneOff, AlertCircle, Heart, Frown, Smile, Meh, Copy, Check, TrendingUp, Clock, BarChart3, Wifi, WifiOff, Settings, Users } from 'lucide-react';
+import { Camera, Mic, MicOff, Video, VideoOff, Phone, PhoneOff, AlertCircle, Heart, Frown, Smile, Meh, Copy, Check, TrendingUp, Clock, BarChart3, Wifi, WifiOff, Settings, Users, Calendar } from 'lucide-react';
 import io from 'socket.io-client';
 import EnhancedAIEmotionAnalyzerRemote from '../utils/EnhancedAIEmotionAnalyzerRemote';
 import EnhancedStatisticsPanel from './EnhancedStatisticsPanel';
