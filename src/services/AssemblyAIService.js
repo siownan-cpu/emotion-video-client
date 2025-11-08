@@ -1,6 +1,6 @@
-// AssemblyAI Service Integration
+// Enhanced AssemblyAI Service Integration
 // Real-time sentiment analysis and conversation intelligence
-// Alternative to Symbl.ai
+// With improved error handling and debugging
 
 class AssemblyAIService {
   constructor(apiKey) {
@@ -14,19 +14,67 @@ class AssemblyAIService {
     this.sentiments = [];
     this.onMessageCallback = null;
     this.onSentimentCallback = null;
+    this.connectionTimeout = null;
+    this.reconnectAttempts = 0;
+    this.maxReconnectAttempts = 3;
+  }
+
+  // Validate API key
+  validateApiKey() {
+    if (!this.apiKey || this.apiKey === 'undefined' || this.apiKey === 'null') {
+      console.error('❌ AssemblyAI API key is missing or invalid');
+      return false;
+    }
+    console.log('✅ API key validated (length:', this.apiKey.length, ')');
+    return true;
   }
 
   // Start real-time transcription with sentiment analysis
   async startRealtimeTranscription(stream) {
     return new Promise((resolve, reject) => {
+      // Validate API key first
+      if (!this.validateApiKey()) {
+        reject(new Error('Invalid API key'));
+        return;
+      }
+
+      // Check if already connected
+      if (this.isConnected && this.websocket?.readyState === WebSocket.OPEN) {
+        console.log('ℹ️ Already connected to AssemblyAI');
+        resolve();
+        return;
+      }
+
       // AssemblyAI real-time endpoint
       const wsUrl = `wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000&token=${this.apiKey}`;
       
-      this.websocket = new WebSocket(wsUrl);
+      console.log('🔌 Attempting to connect to AssemblyAI WebSocket...');
+      console.log('   URL:', wsUrl.substring(0, 50) + '...');
+      
+      try {
+        this.websocket = new WebSocket(wsUrl);
+      } catch (error) {
+        console.error('❌ Failed to create WebSocket:', error);
+        reject(error);
+        return;
+      }
+
+      // Set connection timeout
+      this.connectionTimeout = setTimeout(() => {
+        if (this.websocket?.readyState !== WebSocket.OPEN) {
+          console.error('❌ WebSocket connection timeout (10s)');
+          console.error('   ReadyState:', this.websocket?.readyState);
+          this.websocket?.close();
+          reject(new Error('Connection timeout'));
+        }
+      }, 10000);
 
       this.websocket.onopen = () => {
+        clearTimeout(this.connectionTimeout);
         console.log('✅ AssemblyAI WebSocket connected');
+        console.log('   ReadyState:', this.websocket.readyState);
         this.isConnected = true;
+        this.reconnectAttempts = 0; // Reset reconnect counter
         
         // Start sending audio
         this.startAudioProcessing(stream);
@@ -38,26 +86,66 @@ class AssemblyAIService {
           const data = JSON.parse(event.data);
           this.handleMessage(data);
         } catch (error) {
-          console.error('Error parsing message:', error);
+          console.error('❌ Error parsing message:', error);
+          console.error('   Raw data:', event.data?.substring(0, 100));
         }
       };
 
       this.websocket.onerror = (error) => {
+        clearTimeout(this.connectionTimeout);
         console.error('❌ AssemblyAI WebSocket error:', error);
         console.error('   ReadyState:', this.websocket?.readyState);
         console.error('   URL:', this.websocket?.url);
+        console.error('   API Key length:', this.apiKey?.length);
+        
+        // Log WebSocket state names for debugging
+        const states = {
+          0: 'CONNECTING',
+          1: 'OPEN',
+          2: 'CLOSING',
+          3: 'CLOSED'
+        };
+        console.error('   State:', states[this.websocket?.readyState]);
+        
         this.isConnected = false;
         reject(error);
       };
 
       this.websocket.onclose = (event) => {
+        clearTimeout(this.connectionTimeout);
         console.log('🔌 AssemblyAI WebSocket closed');
-        console.log('   Code:', event.code, 'Reason:', event.reason);
+        console.log('   Code:', event.code);
+        console.log('   Reason:', event.reason || 'No reason provided');
+        console.log('   Was clean:', event.wasClean);
+        
+        // Log common close codes
+        const closeCodes = {
+          1000: 'Normal closure',
+          1001: 'Going away',
+          1002: 'Protocol error',
+          1003: 'Unsupported data',
+          1006: 'Abnormal closure',
+          1007: 'Invalid frame payload',
+          1008: 'Policy violation',
+          1009: 'Message too big',
+          1011: 'Server error',
+          1015: 'TLS handshake failed'
+        };
+        console.log('   Meaning:', closeCodes[event.code] || 'Unknown');
+        
         this.isConnected = false;
         
-        // If closed unexpectedly, try to reconnect
-        if (event.code !== 1000 && event.code !== 1001) {
-          console.warn('⚠️ Unexpected close, connection may have failed');
+        // Attempt reconnect on unexpected closure
+        if (!event.wasClean && this.reconnectAttempts < this.maxReconnectAttempts) {
+          this.reconnectAttempts++;
+          console.log(`🔄 Attempting reconnection (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
+          setTimeout(() => {
+            if (stream) {
+              this.startRealtimeTranscription(stream).catch(err => {
+                console.error('❌ Reconnection failed:', err);
+              });
+            }
+          }, 2000 * this.reconnectAttempts); // Exponential backoff
         }
       };
     });
@@ -66,11 +154,24 @@ class AssemblyAIService {
   // Process audio stream
   async startAudioProcessing(stream) {
     if (!stream) {
-      console.error('No audio stream provided');
+      console.error('❌ No audio stream provided');
       return;
     }
 
     try {
+      // Check if stream has audio tracks
+      const audioTracks = stream.getAudioTracks();
+      if (audioTracks.length === 0) {
+        console.error('❌ No audio tracks in stream');
+        return;
+      }
+
+      console.log('🎤 Starting audio processing...');
+      console.log('   Audio tracks:', audioTracks.length);
+      console.log('   First track:', audioTracks[0].label);
+      console.log('   Track enabled:', audioTracks[0].enabled);
+      console.log('   Track ready state:', audioTracks[0].readyState);
+
       this.audioContext = new (window.AudioContext || window.webkitAudioContext)({
         sampleRate: 16000,
       });
@@ -81,8 +182,11 @@ class AssemblyAIService {
       source.connect(this.processor);
       this.processor.connect(this.audioContext.destination);
 
+      let audioPacketsCount = 0;
+      let lastLogTime = Date.now();
+
       this.processor.onaudioprocess = (e) => {
-        if (this.isConnected && this.websocket.readyState === WebSocket.OPEN) {
+        if (this.isConnected && this.websocket?.readyState === WebSocket.OPEN) {
           const audioData = e.inputBuffer.getChannelData(0);
           
           // Convert Float32Array to Int16Array (PCM16)
@@ -94,8 +198,18 @@ class AssemblyAIService {
           // Send as base64
           const base64Audio = this.arrayBufferToBase64(pcm16.buffer);
           
-          if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+          try {
             this.websocket.send(JSON.stringify({ audio_data: base64Audio }));
+            audioPacketsCount++;
+
+            // Log every 5 seconds
+            const now = Date.now();
+            if (now - lastLogTime > 5000) {
+              console.log(`📡 Sent ${audioPacketsCount} audio packets to AssemblyAI`);
+              lastLogTime = now;
+            }
+          } catch (error) {
+            console.error('❌ Error sending audio packet:', error);
           }
         }
       };
@@ -103,6 +217,7 @@ class AssemblyAIService {
       console.log('✅ Audio processing started');
     } catch (error) {
       console.error('❌ Error starting audio processing:', error);
+      throw error;
     }
   }
 
@@ -124,6 +239,7 @@ class AssemblyAIService {
     } else if (data.message_type === 'FinalTranscript') {
       // Final transcript with sentiment
       console.log('✅ Final:', data.text);
+      console.log('   Confidence:', data.confidence);
       
       const message = {
         text: data.text,
@@ -140,21 +256,26 @@ class AssemblyAIService {
       // Analyze sentiment for this message
       this.analyzeSentiment(data.text);
     } else if (data.message_type === 'SessionBegins') {
-      console.log('🎤 Session started');
+      console.log('🎤 AssemblyAI session started');
+      console.log('   Session ID:', data.session_id);
+      console.log('   Expires:', data.expires_at);
+    } else if (data.message_type === 'SessionTerminated') {
+      console.log('🔚 AssemblyAI session terminated');
+    } else {
+      console.log('ℹ️ AssemblyAI message:', data.message_type);
     }
   }
 
-  // Analyze sentiment using simple keyword-based approach
-  // (AssemblyAI real-time doesn't include sentiment, so we do basic analysis)
+  // Analyze sentiment using keyword-based approach
   analyzeSentiment(text) {
     const lowerText = text.toLowerCase();
 
     // Positive keywords
-    const positiveKeywords = ['good', 'great', 'happy', 'excellent', 'wonderful', 'love', 'amazing', 'fantastic', 'better', 'best'];
+    const positiveKeywords = ['good', 'great', 'happy', 'excellent', 'wonderful', 'love', 'amazing', 'fantastic', 'better', 'best', 'excited', 'pleased', 'joy', 'delighted'];
     // Negative keywords
-    const negativeKeywords = ['bad', 'terrible', 'awful', 'hate', 'horrible', 'worst', 'pain', 'hurt', 'sad', 'angry', 'frustrated', 'worried'];
+    const negativeKeywords = ['bad', 'terrible', 'awful', 'hate', 'horrible', 'worst', 'pain', 'hurt', 'sad', 'angry', 'frustrated', 'worried', 'upset', 'disappointed'];
     // Distress keywords
-    const distressKeywords = ['pain', 'hurt', 'alone', 'lonely', 'depressed', 'anxious', 'scared', 'worried', 'afraid'];
+    const distressKeywords = ['pain', 'hurt', 'alone', 'lonely', 'depressed', 'anxious', 'scared', 'worried', 'afraid', 'hopeless', 'helpless', 'suffering', 'suicide', 'die'];
 
     let positiveCount = 0;
     let negativeCount = 0;
@@ -169,11 +290,15 @@ class AssemblyAIService {
     });
 
     distressKeywords.forEach(word => {
-      if (lowerText.includes(word)) distressCount++;
+      if (lowerText.includes(word)) {
+        distressCount++;
+        console.warn(`⚠️ Distress keyword detected: "${word}"`);
+      }
     });
 
-    // Calculate sentiment score
-    const score = (positiveCount - negativeCount) / Math.max(1, positiveCount + negativeCount + 1);
+    // Calculate sentiment score (-1 to 1)
+    const totalWords = positiveCount + negativeCount + 1;
+    const score = (positiveCount - negativeCount) / totalWords;
     const polarity = score > 0.2 ? 'positive' : score < -0.2 ? 'negative' : 'neutral';
 
     const sentiment = {
@@ -193,226 +318,79 @@ class AssemblyAIService {
       this.onSentimentCallback(sentiment);
     }
 
+    // Log sentiment if significant
+    if (distressCount > 0 || Math.abs(score) > 0.5) {
+      console.log('😊 Sentiment analysis:', {
+        polarity: polarity.toUpperCase(),
+        score: score.toFixed(2),
+        distress: distressCount > 0,
+        text: text.substring(0, 50) + '...'
+      });
+    }
+
     return sentiment;
   }
 
   // Stop real-time transcription
   stopRealtimeTranscription() {
+    console.log('🛑 Stopping AssemblyAI transcription...');
+
+    if (this.connectionTimeout) {
+      clearTimeout(this.connectionTimeout);
+    }
+
     if (this.websocket && this.isConnected) {
-      this.websocket.send(JSON.stringify({ terminate_session: true }));
-      
-      setTimeout(() => {
-        if (this.websocket) {
-          this.websocket.close();
+      try {
+        // Send termination message
+        if (this.websocket.readyState === WebSocket.OPEN) {
+          this.websocket.send(JSON.stringify({ terminate_session: true }));
+          console.log('📤 Sent termination message');
         }
-      }, 1000);
+        
+        // Wait a moment for graceful closure
+        setTimeout(() => {
+          if (this.websocket) {
+            this.websocket.close(1000, 'Normal closure');
+            console.log('🔌 WebSocket closed');
+          }
+        }, 500);
+      } catch (error) {
+        console.error('❌ Error closing WebSocket:', error);
+      }
     }
 
     // Clean up audio processing
     if (this.processor) {
-      this.processor.disconnect();
-      this.processor = null;
-    }
-
-    if (this.audioContext) {
-      this.audioContext.close();
-      this.audioContext = null;
-    }
-
-    this.isConnected = false;
-  }
-
-  // Upload and analyze audio file (for post-call analysis)
-  async uploadAudio(audioBlob) {
-    try {
-      console.log('📤 Uploading audio for analysis...');
-
-      // Upload audio
-      const uploadResponse = await fetch('https://api.assemblyai.com/v2/upload', {
-        method: 'POST',
-        headers: {
-          'authorization': this.apiKey,
-        },
-        body: audioBlob,
-      });
-
-      const uploadData = await uploadResponse.json();
-      const audioUrl = uploadData.upload_url;
-
-      console.log('✅ Audio uploaded:', audioUrl);
-
-      // Request transcription with sentiment analysis
-      const transcriptResponse = await fetch('https://api.assemblyai.com/v2/transcript', {
-        method: 'POST',
-        headers: {
-          'authorization': this.apiKey,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          audio_url: audioUrl,
-          sentiment_analysis: true,
-          auto_highlights: true,
-          entity_detection: true,
-          iab_categories: true,
-          speaker_labels: true,
-        }),
-      });
-
-      const transcriptData = await transcriptResponse.json();
-      this.transcriptId = transcriptData.id;
-
-      console.log('✅ Transcription requested:', this.transcriptId);
-
-      // Poll for completion
-      return await this.pollTranscript(this.transcriptId);
-    } catch (error) {
-      console.error('❌ Error uploading audio:', error);
-      throw error;
-    }
-  }
-
-  // Poll for transcript completion
-  async pollTranscript(transcriptId) {
-    const maxAttempts = 60;
-    let attempts = 0;
-
-    while (attempts < maxAttempts) {
       try {
-        const response = await fetch(`https://api.assemblyai.com/v2/transcript/${transcriptId}`, {
-          headers: {
-            'authorization': this.apiKey,
-          },
-        });
-
-        const data = await response.json();
-
-        if (data.status === 'completed') {
-          console.log('✅ Transcription completed');
-          return this.processTranscriptData(data);
-        } else if (data.status === 'error') {
-          throw new Error('Transcription failed: ' + data.error);
-        }
-
-        // Wait 2 seconds before next poll
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        attempts++;
+        this.processor.disconnect();
+        this.processor = null;
+        console.log('✅ Audio processor disconnected');
       } catch (error) {
-        console.error('❌ Error polling transcript:', error);
-        throw error;
+        console.error('❌ Error disconnecting processor:', error);
       }
     }
 
-    throw new Error('Transcription timeout');
-  }
-
-  // Process transcript data into usable format
-  processTranscriptData(data) {
-    const messages = [];
-    const topics = [];
-    const sentimentData = [];
-
-    // Process sentences with sentiment
-    if (data.sentiment_analysis_results) {
-      data.sentiment_analysis_results.forEach(result => {
-        sentimentData.push({
-          text: result.text,
-          sentiment: result.sentiment,
-          confidence: result.confidence,
-          start: result.start,
-          end: result.end,
-        });
-
-        messages.push({
-          text: result.text,
-          sentiment: {
-            polarity: {
-              score: result.sentiment === 'POSITIVE' ? 0.7 : 
-                     result.sentiment === 'NEGATIVE' ? -0.7 : 0,
-            },
-            suggested: result.sentiment.toLowerCase(),
-          },
-        });
-      });
+    if (this.audioContext) {
+      try {
+        this.audioContext.close();
+        this.audioContext = null;
+        console.log('✅ Audio context closed');
+      } catch (error) {
+        console.error('❌ Error closing audio context:', error);
+      }
     }
 
-    // Process auto highlights as topics
-    if (data.auto_highlights_result?.results) {
-      data.auto_highlights_result.results.forEach(highlight => {
-        topics.push({
-          text: highlight.text,
-          count: highlight.count,
-          rank: highlight.rank,
-          timestamps: highlight.timestamps,
-        });
-      });
-    }
-
-    // Calculate overall statistics
-    const avgSentiment = this.calculateAverageSentiment(sentimentData);
-    const distressIndicators = this.detectDistressIndicators(data.text || '');
-
-    return {
-      transcriptId: data.id,
-      text: data.text,
-      messages,
-      topics,
-      sentiment: {
-        averageSentiment: avgSentiment,
-        sentimentDistribution: this.calculateSentimentDistribution(sentimentData),
-        distressIndicators,
-      },
-      duration: data.audio_duration || 0,
-      entities: data.entities || [],
-      categories: data.iab_categories_result?.summary || {},
-    };
-  }
-
-  // Calculate average sentiment
-  calculateAverageSentiment(sentimentData) {
-    if (sentimentData.length === 0) return 0;
-
-    const scores = sentimentData.map(s => 
-      s.sentiment === 'POSITIVE' ? 0.7 : 
-      s.sentiment === 'NEGATIVE' ? -0.7 : 0
-    );
-
-    return scores.reduce((a, b) => a + b, 0) / scores.length;
-  }
-
-  // Calculate sentiment distribution
-  calculateSentimentDistribution(sentimentData) {
-    const distribution = {
-      positive: 0,
-      neutral: 0,
-      negative: 0,
-    };
-
-    sentimentData.forEach(s => {
-      if (s.sentiment === 'POSITIVE') distribution.positive++;
-      else if (s.sentiment === 'NEGATIVE') distribution.negative++;
-      else distribution.neutral++;
-    });
-
-    return distribution;
-  }
-
-  // Detect distress indicators
-  detectDistressIndicators(text) {
-    const lowerText = text.toLowerCase();
-    const distressKeywords = ['pain', 'hurt', 'alone', 'lonely', 'depressed', 'anxious', 'scared', 'worried', 'afraid', 'sad', 'hopeless'];
-    
-    let count = 0;
-    distressKeywords.forEach(keyword => {
-      const regex = new RegExp(keyword, 'gi');
-      const matches = lowerText.match(regex);
-      if (matches) count += matches.length;
-    });
-
-    return count;
+    this.isConnected = false;
+    this.websocket = null;
+    console.log('✅ AssemblyAI transcription stopped');
   }
 
   // Get conversation analytics
   getConversationAnalytics() {
+    console.log('📊 Generating conversation analytics...');
+    console.log('   Messages:', this.messages.length);
+    console.log('   Sentiments:', this.sentiments.length);
+
     const sentimentDistribution = {
       positive: 0,
       neutral: 0,
@@ -431,7 +409,7 @@ class AssemblyAIService {
 
     const distressIndicators = this.sentiments.reduce((sum, s) => sum + (s.distressKeywords || 0), 0);
 
-    return {
+    const analytics = {
       conversationId: `assembly-${Date.now()}`,
       messages: this.messages,
       topics: this.extractTopics(),
@@ -446,15 +424,30 @@ class AssemblyAIService {
         sentimentDistribution,
         distressIndicators,
       },
-      duration: 0, // Would need to track call duration separately
+      duration: 0, // Will be set by caller
     };
+
+    console.log('✅ Analytics generated:', {
+      messages: analytics.messages.length,
+      avgSentiment: avgSentiment.toFixed(2),
+      distressIndicators
+    });
+
+    return analytics;
   }
 
   // Extract topics from messages
   extractTopics() {
     // Simple word frequency analysis
     const wordFrequency = {};
-    const stopWords = new Set(['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'was', 'are', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'must', 'can', 'i', 'you', 'he', 'she', 'it', 'we', 'they', 'my', 'your', 'his', 'her', 'its', 'our', 'their']);
+    const stopWords = new Set([
+      'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 
+      'of', 'with', 'by', 'is', 'was', 'are', 'were', 'be', 'been', 'being', 
+      'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 
+      'should', 'may', 'might', 'must', 'can', 'i', 'you', 'he', 'she', 'it', 
+      'we', 'they', 'my', 'your', 'his', 'her', 'its', 'our', 'their', 'this',
+      'that', 'these', 'those', 'there', 'here', 'where', 'when', 'why', 'how'
+    ]);
 
     this.messages.forEach(msg => {
       const words = msg.text.toLowerCase().split(/\W+/);
@@ -473,6 +466,7 @@ class AssemblyAIService {
         text: word,
         score: count / this.messages.length,
         type: 'topic',
+        count: count
       }));
   }
 
@@ -483,6 +477,17 @@ class AssemblyAIService {
 
   onSentiment(callback) {
     this.onSentimentCallback = callback;
+  }
+
+  // Get connection status
+  getStatus() {
+    return {
+      connected: this.isConnected,
+      websocketState: this.websocket?.readyState,
+      messagesReceived: this.messages.length,
+      sentimentsAnalyzed: this.sentiments.length,
+      reconnectAttempts: this.reconnectAttempts
+    };
   }
 }
 
