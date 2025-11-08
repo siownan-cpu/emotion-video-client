@@ -141,6 +141,7 @@ const EmotionVideoCallWithWebRTC = () => {
   const remotePeerIdRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
   const demoIntervalRef = useRef(null);
+  const assemblyStartedRef = useRef(false); // ✨ Prevent multiple AssemblyAI starts
 
   // Auto-start speech analysis when connected
   useEffect(() => {
@@ -559,16 +560,22 @@ const EmotionVideoCallWithWebRTC = () => {
         startAnalysis();
         startStatisticsTracking();
 
-        // ✨ Start AssemblyAI transcription
-        if (assemblyAI && remoteStreamReceived) {
+        // ✨ Start AssemblyAI transcription (ONLY ONCE)
+        if (assemblyAI && remoteStreamReceived && !assemblyStartedRef.current) {
+          assemblyStartedRef.current = true; // Prevent multiple starts
+          console.log('🎤 Starting AssemblyAI transcription (first time only)...');
+          
           assemblyAI.startRealtimeTranscription(remoteStreamReceived)
             .then(() => {
             setAssemblyConnected(true);
-            console.log('✅ AssemblyAI transcription started');
+            console.log('✅ AssemblyAI transcription started successfully');
           })
           .catch(error => {
             console.error('❌ AssemblyAI error:', error);
+            assemblyStartedRef.current = false; // Reset on error to allow retry
           });
+        } else if (assemblyStartedRef.current) {
+          console.log('ℹ️ AssemblyAI already started, skipping...');
         }
                 
         // 🎤 Initialize speech analyzer on REMOTE stream (patient's audio)
@@ -951,17 +958,37 @@ const EmotionVideoCallWithWebRTC = () => {
   const endCall = () => {
     console.log('📞 Ending call');
 
-    // ✨ Get analytics from AssemblyAI
+    // ✨ Get analytics from AssemblyAI BEFORE cleanup
     let analytics = null;
+    const patientId = remotePeerIdRef.current; // Save before cleanup
+    const callDuration = callStatistics.startTime 
+      ? Math.floor((Date.now() - callStatistics.startTime) / 1000)
+      : 0;
+
     if (assemblyAI && assemblyConnected) {
       try {
+        console.log('📊 Collecting analytics...');
         assemblyAI.stopRealtimeTranscription();
         analytics = assemblyAI.getConversationAnalytics();
+        
+        // Add call duration to analytics
+        if (analytics) {
+          analytics.duration = callDuration;
+          analytics.patientUserId = patientId || 'unknown';
+        }
+        
         setConversationData(analytics);
-        console.log('✅ Analytics retrieved:', analytics);
+        console.log('✅ Analytics retrieved:', {
+          messages: analytics.messages?.length || 0,
+          sentimentAvg: analytics.sentiment?.averageSentiment || 0,
+          duration: callDuration,
+          patientId: patientId || 'none'
+        });
       } catch (error) {
         console.error('❌ Error getting analytics:', error);
       }
+    } else {
+      console.warn('⚠️ No analytics available - AssemblyAI not connected');
     }
     
     if (reconnectTimeoutRef.current) {
@@ -1006,7 +1033,14 @@ const EmotionVideoCallWithWebRTC = () => {
     localStreamRef.current = null;
     peerConnectionRef.current = null;
     socketRef.current = null;
-    remotePeerIdRef.current = null;
+    
+    // ✨ Reset AssemblyAI state for next call
+    assemblyStartedRef.current = false;
+    setAssemblyConnected(false);
+    
+    // Don't clear remotePeerIdRef yet - needed for dashboard
+    // remotePeerIdRef.current = null;
+    
     setIceStats({ localCandidates: 0, remoteCandidates: 0, selectedPair: null });
     
     setConnectionStatus({
@@ -1016,9 +1050,20 @@ const EmotionVideoCallWithWebRTC = () => {
     });
 
     // ✨ Show dashboard for caregivers/superadmins
-    if (analytics && isAdmin()) {
+    console.log('🎯 Checking dashboard conditions:', {
+      hasAnalytics: !!analytics,
+      isAdmin: isAdmin(),
+      patientId: patientId
+    });
+    
+    if (analytics && patientId) {
+      console.log('✅ Opening post-call dashboard');
       setShowPostCallDashboard(true);
-    } 
+    } else {
+      console.warn('⚠️ Dashboard not shown:', {
+        reason: !analytics ? 'No analytics' : !patientId ? 'No patient ID' : 'Not admin'
+      });
+    }
   };
 
   const toggleVideo = () => {
@@ -1852,10 +1897,14 @@ const initializeAssemblyAI = async () => {
   <PostCallDashboard
     conversationData={conversationData}
     userProfile={userProfile}
-    patientUserId={remotePeerIdRef.current}
-    onClose={() => setShowPostCallDashboard(false)}
+    patientUserId={conversationData.patientUserId || remotePeerIdRef.current || currentRoomId || 'anonymous'}
+    onClose={() => {
+      setShowPostCallDashboard(false);
+      // Now safe to clear remote peer ID
+      remotePeerIdRef.current = null;
+    }}
     onAssignCaregiver={() => {
-      alert('Caregiver assignment - integrate with your system');
+      alert('Caregiver assignment feature - integrate with your user management system');
     }}
   />
 )}
