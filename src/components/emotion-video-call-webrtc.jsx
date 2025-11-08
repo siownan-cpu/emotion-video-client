@@ -91,7 +91,7 @@ const EmotionVideoCallWithWebRTC = () => {
   const reconnectTimeoutRef = useRef(null);
 
   useEffect(() => {
-    loadAvailableDevices();
+    // Moved to startCall to avoid premature device access request
   }, []);
 
   const loadAvailableDevices = async () => {
@@ -707,6 +707,7 @@ const EmotionVideoCallWithWebRTC = () => {
       alert('Please enter a room ID');
       return;
     }
+    await loadAvailableDevices();
 
     try {
       console.log('🎥 Starting call...');
