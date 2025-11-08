@@ -906,6 +906,9 @@ const EmotionVideoCallWithWebRTC = () => {
        
       }));
 
+      // ✨ Initialize AssemblyAI
+      const service = await initializeAssemblyAI();
+    
       // Speech analyzer will be initialized when remote stream connects
       console.log('📞 Call started, waiting for remote stream to initialize speech analysis');
 
@@ -920,17 +923,6 @@ const EmotionVideoCallWithWebRTC = () => {
       console.error('❌ Error accessing media:', error);
       alert('Could not access camera/microphone: ' + error.message);
     }
-
-    // ✨ Initialize AssemblyAI
-    const service = await initializeAssemblyAI();
-    
-    // Wait for remote stream to be available
-    // We'll start transcription when peer connects
-
-  } catch (error) {
-    console.error('❌ Error:', error);
-  }    
-  
   };
 
   const endCall = () => {
