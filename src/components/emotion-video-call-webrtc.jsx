@@ -1363,7 +1363,6 @@ const EmotionVideoCallWithWebRTC = () => {
 const initializeAssemblyAI = async () => {
   // ✅ NO API KEY NEEDED - backend provides tokens
   console.log('🔑 AssemblyAI v3 Initialization');
-  }
 
   try {
     const service = new AssemblyAIService();  // ✅ NEW (no API key)
