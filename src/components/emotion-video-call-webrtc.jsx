@@ -582,22 +582,62 @@ const EmotionVideoCallWithWebRTC = () => {
         startAnalysis();
         startStatisticsTracking();
 
-        // ✨ Start AssemblyAI transcription (ONLY ONCE)
+        // ✨ CRITICAL FIX: Enhanced AssemblyAI startup with full diagnostics
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        console.log('🔍 ASSEMBLYAI STARTUP CHECK');
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        console.log('1. assemblyAI exists?', !!assemblyAI);
+        console.log('   Type:', typeof assemblyAI);
+        console.log('   Value:', assemblyAI);
+        
+        console.log('2. remoteStreamReceived exists?', !!remoteStreamReceived);
+        console.log('   Tracks:', remoteStreamReceived?.getTracks().length);
+        console.log('   Audio tracks:', remoteStreamReceived?.getAudioTracks().length);
+        
+        console.log('3. assemblyStartedRef.current?', assemblyStartedRef.current);
+        
+        console.log('4. Full condition result:', 
+          !!assemblyAI && !!remoteStreamReceived && !assemblyStartedRef.current);
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
         if (assemblyAI && remoteStreamReceived && !assemblyStartedRef.current) {
-          assemblyStartedRef.current = true; // Prevent multiple starts
-          console.log('🎤 Starting AssemblyAI transcription (first time only)...');
+          assemblyStartedRef.current = true;
+          console.log('✅ ALL CONDITIONS MET! Starting AssemblyAI...');
+          console.log('🎤 Starting AssemblyAI transcription with REMOTE PATIENT audio');
+          console.log('   Stream ID:', remoteStreamReceived.id);
+          console.log('   Audio tracks:', remoteStreamReceived.getAudioTracks().length);
           
           assemblyAI.startRealtimeTranscription(remoteStreamReceived)
             .then(() => {
-            setAssemblyConnected(true);
-            console.log('✅ AssemblyAI transcription started successfully');
-          })
-          .catch(error => {
-            console.error('❌ AssemblyAI error:', error);
-            assemblyStartedRef.current = false; // Reset on error to allow retry
-          });
-        } else if (assemblyStartedRef.current) {
-          console.log('ℹ️ AssemblyAI already started, skipping...');
+              setAssemblyConnected(true);
+              console.log('✅✅✅ AssemblyAI transcription started successfully!');
+              console.log('   Ready to transcribe patient audio');
+            })
+            .catch(error => {
+              console.error('❌❌❌ AssemblyAI start FAILED!');
+              console.error('   Error:', error);
+              console.error('   Message:', error.message);
+              console.error('   Stack:', error.stack);
+              assemblyStartedRef.current = false;
+              addAlert('AssemblyAI failed to start: ' + error.message, 'alert');
+            });
+        } else {
+          console.error('❌ CONDITION CHECK FAILED!');
+          console.error('   Cannot start AssemblyAI');
+          
+          if (!assemblyAI) {
+            console.error('   ❌ Problem: assemblyAI is NULL/undefined');
+            console.error('   → Check: Did initializeAssemblyAI() return a service?');
+            console.error('   → Check: Was setAssemblyAI() called?');
+          }
+          
+          if (!remoteStreamReceived) {
+            console.error('   ❌ Problem: remoteStreamReceived is NULL');
+          }
+          
+          if (assemblyStartedRef.current) {
+            console.warn('   ⚠️ Info: AssemblyAI already started (ref = true)');
+          }
         }
                 
         // 🎤 Initialize speech analyzer on REMOTE stream (patient's audio)
@@ -960,6 +1000,18 @@ const EmotionVideoCallWithWebRTC = () => {
 
       // ✨ Initialize AssemblyAI
       const service = await initializeAssemblyAI();
+      
+      // 🔍 CRITICAL DEBUG: Check what was returned
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log('🔍 initializeAssemblyAI RESULT:');
+      console.log('   Returned:', service);
+      console.log('   Is null?', service === null);
+      console.log('   Type:', typeof service);
+      if (service) {
+        console.log('   Has startRealtimeTranscription?', 
+          typeof service.startRealtimeTranscription === 'function');
+      }
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     
       // Speech analyzer will be initialized when remote stream connects
       console.log('📞 Call started, waiting for remote stream to initialize speech analysis');
