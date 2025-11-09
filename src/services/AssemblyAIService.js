@@ -34,8 +34,7 @@ class AssemblyAIService {
     return new Promise((resolve, reject) => {
       // Validate API key first
       if (!this.validateApiKey()) {
-        // ✨ REJECT with a more specific error for the UI
-        reject(new Error('AssemblyAI API key is missing or invalid. Please check your .env file or environment variables.'));
+        reject(new Error('Invalid API key'));
         return;
       }
 
