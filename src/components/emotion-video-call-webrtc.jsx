@@ -33,6 +33,20 @@ import AssemblyAIService from '../services/AssemblyAIService';
 import PostCallDashboard from './PostCallDashboard';
 import CallHistoryViewer from './CallHistoryViewer';
 
+// ✅ FIX: Universal environment variable helper for dev and production
+const getEnvVar = (key) => {
+  if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env[key]) {
+    return import.meta.env[key];
+  }
+  if (typeof process !== 'undefined' && process.env && process.env[key]) {
+    return process.env[key];
+  }
+  if (typeof window !== 'undefined' && window[key]) {
+    return window[key];
+  }
+  return undefined;
+};
+
 const EmotionVideoCallWithWebRTC = () => {
   // Get user data from AuthContext
   const { userProfile, isAdmin } = useAuth();
@@ -47,7 +61,7 @@ const EmotionVideoCallWithWebRTC = () => {
   const [currentRoomId, setCurrentRoomId] = useState('');
   const [isConnected, setIsConnected] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [meteredApiKey, setMeteredApiKey] = useState(import.meta.env.VITE_METERED_API_KEY || '2ad5a09d363a45ccaf335c6dc36acf9cad87');
+  const [meteredApiKey, setMeteredApiKey] = useState(getEnvVar('VITE_METERED_API_KEY'));
   const [showMeteredInput, setShowMeteredInput] = useState(false);
 
   const [availableDevices, setAvailableDevices] = useState({
@@ -142,6 +156,14 @@ const EmotionVideoCallWithWebRTC = () => {
   const reconnectTimeoutRef = useRef(null);
   const demoIntervalRef = useRef(null);
   const assemblyStartedRef = useRef(false); // ✨ Prevent multiple AssemblyAI starts
+
+  // ✅ DEBUG: Log environment variables on component mount
+  useEffect(() => {
+    console.log('🔍 Environment Variables Check:');
+    console.log('   VITE_ASSEMBLYAI_API_KEY:', getEnvVar('VITE_ASSEMBLYAI_API_KEY') ? '✅ SET' : '❌ NOT SET');
+    console.log('   VITE_METERED_API_KEY:', getEnvVar('VITE_METERED_API_KEY') ? '✅ SET' : '❌ NOT SET');
+    console.log('   VITE_SERVER_URL:', getEnvVar('VITE_SERVER_URL') ? '✅ SET' : '❌ NOT SET');
+  }, []);
 
   // Auto-start speech analysis when connected
   useEffect(() => {
@@ -434,7 +456,7 @@ const EmotionVideoCallWithWebRTC = () => {
   };
 
   const connectToServer = () => {
-    const serverUrl = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001';
+    const serverUrl = getEnvVar('VITE_SERVER_URL') || 'http://localhost:3001';
     console.log('🔧 Connecting to server:', serverUrl);
 
     socketRef.current = io(serverUrl, {
@@ -1275,10 +1297,17 @@ const EmotionVideoCallWithWebRTC = () => {
 
   // Initialize AssemblyAI
 const initializeAssemblyAI = async () => {
-  const apiKey = import.meta.env.VITE_ASSEMBLYAI_API_KEY;
+  const apiKey = getEnvVar('VITE_ASSEMBLYAI_API_KEY');
 
-  if (!apiKey) {
-    console.warn('⚠️ AssemblyAI API key not configured');
+  console.log('🔑 AssemblyAI API Key Check:');
+  console.log('   Key exists:', !!apiKey);
+  console.log('   Key length:', apiKey?.length || 0);
+  console.log('   Key preview:', apiKey ? `${apiKey.substring(0, 10)}...${apiKey.substring(apiKey.length - 5)}` : 'undefined');
+
+  if (!apiKey || apiKey === 'undefined' || apiKey === 'null') {
+    console.error('❌ AssemblyAI API key not configured or invalid');
+    console.error('   Please set VITE_ASSEMBLYAI_API_KEY in your Vercel environment variables');
+    addAlert('AssemblyAI not configured - transcription disabled', 'warning');
     return null;
   }
 
@@ -1309,10 +1338,11 @@ const initializeAssemblyAI = async () => {
     });
 
     setAssemblyAI(service);
-    console.log('✅ AssemblyAI initialized');
+    console.log('✅ AssemblyAI initialized successfully');
     return service;
   } catch (error) {
     console.error('❌ AssemblyAI initialization failed:', error);
+    addAlert('Failed to initialize AssemblyAI', 'alert');
     return null;
   }
 };
