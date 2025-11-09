@@ -42,12 +42,13 @@ class AssemblyAIService {
     try {
       console.log('🔑 Requesting temporary token from backend...');
       console.log('   Server URL:', serverUrl);
-
-      const response = await fetch(`${serverUrl}/api/assemblyai-token`, {
+      
+      const desiredTtl = 60; // Pick 60–600s for v3 tokens
+      const response = await fetch(`${serverUrl}/api/assemblyai-token?expires_in_seconds=${desiredTtl}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
-        }
+        },
       });
 
       if (!response.ok) {
@@ -63,9 +64,8 @@ class AssemblyAIService {
       }
 
       this.token = data.token;
-      console.log('✅ Got temporary token (expires in', data.expires_in || 3600, 'seconds)');
-      console.log('   Token preview:', this.token.substring(0, 20) + '...');
-      
+      console.log('✅ Got temporary token (expires in', data.expires_in_seconds, 'seconds)');
+      console.log(' Token preview:', this.token.substring(0, 20) + '...');
       return this.token;
     } catch (error) {
       console.error('❌ Error getting token:', error);
