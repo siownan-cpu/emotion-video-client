@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="heartGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#ef4444;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#dc2626;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Heart shape -->
+  <path d="M50 85 C25 70 10 55 10 35 C10 22 19 13 30 13 C37 13 44 17 50 23 C56 17 63 13 70 13 C81 13 90 22 90 35 C90 55 75 70 50 85 Z" 
+        fill="url(#heartGradient)" 
+        stroke="#991b1b" 
+        stroke-width="2"/>
+  
+  <!-- Smile inside heart -->
+  <circle cx="40" cy="40" r="3" fill="#fef2f2"/>
+  <circle cx="60" cy="40" r="3" fill="#fef2f2"/>
+  <path d="M 35 50 Q 50 60 65 50" stroke="#fef2f2" stroke-width="3" fill="none" stroke-linecap="round"/>
+</svg>
