@@ -156,6 +156,7 @@ const EmotionVideoCallWithWebRTC = () => {
   const reconnectTimeoutRef = useRef(null);
   const demoIntervalRef = useRef(null);
   const assemblyStartedRef = useRef(false); // ✨ Prevent multiple AssemblyAI starts
+  const assemblyAIRef = useRef(null); // ✅ FIX: Store AssemblyAI service in ref for immediate access
 
   // ✅ DEBUG: Log environment variables on component mount
   useEffect(() => {
@@ -586,9 +587,10 @@ const EmotionVideoCallWithWebRTC = () => {
         console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
         console.log('🔍 ASSEMBLYAI STARTUP CHECK');
         console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        console.log('1. assemblyAI exists?', !!assemblyAI);
-        console.log('   Type:', typeof assemblyAI);
-        console.log('   Value:', assemblyAI);
+        console.log('1. assemblyAI state exists?', !!assemblyAI);
+        console.log('   assemblyAIRef.current exists?', !!assemblyAIRef.current);
+        console.log('   Type:', typeof assemblyAIRef.current);
+        console.log('   Value:', assemblyAIRef.current);
         
         console.log('2. remoteStreamReceived exists?', !!remoteStreamReceived);
         console.log('   Tracks:', remoteStreamReceived?.getTracks().length);
@@ -597,17 +599,18 @@ const EmotionVideoCallWithWebRTC = () => {
         console.log('3. assemblyStartedRef.current?', assemblyStartedRef.current);
         
         console.log('4. Full condition result:', 
-          !!assemblyAI && !!remoteStreamReceived && !assemblyStartedRef.current);
+          !!assemblyAIRef.current && !!remoteStreamReceived && !assemblyStartedRef.current);
         console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
-        if (assemblyAI && remoteStreamReceived && !assemblyStartedRef.current) {
+        // ✅ FIX: Use assemblyAIRef.current instead of assemblyAI state
+        if (assemblyAIRef.current && remoteStreamReceived && !assemblyStartedRef.current) {
           assemblyStartedRef.current = true;
           console.log('✅ ALL CONDITIONS MET! Starting AssemblyAI...');
           console.log('🎤 Starting AssemblyAI transcription with REMOTE PATIENT audio');
           console.log('   Stream ID:', remoteStreamReceived.id);
           console.log('   Audio tracks:', remoteStreamReceived.getAudioTracks().length);
           
-          assemblyAI.startRealtimeTranscription(remoteStreamReceived)
+          assemblyAIRef.current.startRealtimeTranscription(remoteStreamReceived)
             .then(() => {
               setAssemblyConnected(true);
               console.log('✅✅✅ AssemblyAI transcription started successfully!');
@@ -625,10 +628,11 @@ const EmotionVideoCallWithWebRTC = () => {
           console.error('❌ CONDITION CHECK FAILED!');
           console.error('   Cannot start AssemblyAI');
           
-          if (!assemblyAI) {
-            console.error('   ❌ Problem: assemblyAI is NULL/undefined');
-            console.error('   → Check: Did initializeAssemblyAI() return a service?');
-            console.error('   → Check: Was setAssemblyAI() called?');
+          if (!assemblyAIRef.current) {
+            console.error('   ❌ Problem: assemblyAIRef.current is NULL/undefined');
+            console.error('   → assemblyAI state:', assemblyAI);
+            console.error('   → This is a React state timing issue');
+            console.error('   → The service was created but state hasn\'t updated yet');
           }
           
           if (!remoteStreamReceived) {
@@ -1001,6 +1005,12 @@ const EmotionVideoCallWithWebRTC = () => {
       // ✨ Initialize AssemblyAI
       const service = await initializeAssemblyAI();
       
+      // ✅ FIX: Store in ref immediately for synchronous access
+      if (service) {
+        assemblyAIRef.current = service;
+        console.log('✅ AssemblyAI service stored in ref for immediate use');
+      }
+      
       // 🔍 CRITICAL DEBUG: Check what was returned
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       console.log('🔍 initializeAssemblyAI RESULT:');
@@ -1010,6 +1020,7 @@ const EmotionVideoCallWithWebRTC = () => {
       if (service) {
         console.log('   Has startRealtimeTranscription?', 
           typeof service.startRealtimeTranscription === 'function');
+        console.log('   Stored in ref:', !!assemblyAIRef.current);
       }
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     
@@ -1039,11 +1050,11 @@ const EmotionVideoCallWithWebRTC = () => {
       ? Math.floor((Date.now() - callStatistics.startTime) / 1000)
       : 0;
 
-    if (assemblyAI && assemblyConnected) {
+    if (assemblyAIRef.current && assemblyConnected) {
       try {
         console.log('📊 Collecting analytics...');
-        assemblyAI.stopRealtimeTranscription();
-        analytics = assemblyAI.getConversationAnalytics();
+        assemblyAIRef.current.stopRealtimeTranscription();
+        analytics = assemblyAIRef.current.getConversationAnalytics();
         
         // Add call duration to analytics
         if (analytics) {
