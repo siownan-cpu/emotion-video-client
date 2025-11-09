@@ -1,9 +1,56 @@
+/**
+ * Emotion Video Call with WebRTC
+ * 
+ * ✅ Features:
+ * - Real-time video calling with WebRTC
+ * - AssemblyAI transcription and sentiment analysis
+ * - Post-call analytics dashboard
+ * - Historical call tracking
+ * - Distress detection
+ * 
+ * ✅ AssemblyAI Integration:
+ * - Real-time speech-to-text
+ * - Sentiment analysis
+ * - Distress keyword detection
+ * - Post-call analytics
+ * 
+ * 📝 Required Environment Variables:
+ * - VITE_ASSEMBLYAI_API_KEY (for transcription & sentiment)
+ * - VITE_METERED_API_KEY (for TURN servers)
+ * - VITE_SERVER_URL (signaling server)
+ * - Firebase config variables
+ */
+
 import React, { useState, useRef, useEffect } from 'react';
-import { Camera, Mic, MicOff, Video, VideoOff, Phone, PhoneOff, AlertCircle, Heart, Frown, Smile, Meh, Copy, Check, TrendingUp, Clock, BarChart3, Wifi, WifiOff, Settings, MessageSquare, Activity } from 'lucide-react';
+import { Camera, Mic, MicOff, Video, VideoOff, Phone, PhoneOff, AlertCircle, Heart, Frown, Smile, Meh, Copy, Check, TrendingUp, Clock, BarChart3, Wifi, WifiOff, Settings, Users, Calendar } from 'lucide-react';
 import io from 'socket.io-client';
-import { AssemblyAIService, getAssemblyAIToken, EmotionAnalyzer } from '../services/AssemblyAIService';
+import EnhancedAIEmotionAnalyzerRemote from '../utils/EnhancedAIEmotionAnalyzerRemote';
+import EnhancedStatisticsPanel from './EnhancedStatisticsPanel';
+import SpeechEmotionIndicator from './SpeechEmotionIndicator';
+import UserRoleManagement from './UserRoleManagement';
+import { useAuth } from '../contexts/AuthContext';
+import AssemblyAIService from '../services/AssemblyAIService';
+import PostCallDashboard from './PostCallDashboard';
+import CallHistoryViewer from './CallHistoryViewer';
+
+// ✅ FIX: Universal environment variable helper for dev and production
+const getEnvVar = (key) => {
+  if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env[key]) {
+    return import.meta.env[key];
+  }
+  if (typeof process !== 'undefined' && process.env && process.env[key]) {
+    return process.env[key];
+  }
+  if (typeof window !== 'undefined' && window[key]) {
+    return window[key];
+  }
+  return undefined;
+};
 
 const EmotionVideoCallWithWebRTC = () => {
+  // Get user data from AuthContext
+  const { userProfile, isAdmin } = useAuth();
+
   const [callActive, setCallActive] = useState(false);
   const [localStream, setLocalStream] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
@@ -14,13 +61,8 @@ const EmotionVideoCallWithWebRTC = () => {
   const [currentRoomId, setCurrentRoomId] = useState('');
   const [isConnected, setIsConnected] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [meteredApiKey, setMeteredApiKey] = useState(import.meta.env.VITE_METERED_API_KEY || '');
-
-  // ✨ NEW: AssemblyAI states
-  const [transcriptEnabled, setTranscriptEnabled] = useState(true);
-  const [liveTranscript, setLiveTranscript] = useState('');
-  const [transcriptHistory, setTranscriptHistory] = useState([]);
-  const [assemblyAIStatus, setAssemblyAIStatus] = useState('disconnected'); // disconnected, connecting, connected, error
+  const [meteredApiKey, setMeteredApiKey] = useState(getEnvVar('VITE_METERED_API_KEY'));
+  const [showMeteredInput, setShowMeteredInput] = useState(false);
 
   const [availableDevices, setAvailableDevices] = useState({
     videoInputs: [],
@@ -33,13 +75,13 @@ const EmotionVideoCallWithWebRTC = () => {
     audioOutputDeviceId: ''
   });
   const [showDeviceSettings, setShowDeviceSettings] = useState(false);
-
   const [connectionStatus, setConnectionStatus] = useState({
     socket: 'disconnected',
     peer: 'disconnected',
     ice: 'new'
   });
   
+  // ✨ NEW: ICE candidate tracking
   const [iceStats, setIceStats] = useState({
     localCandidates: 0,
     remoteCandidates: 0,
@@ -84,8 +126,24 @@ const EmotionVideoCallWithWebRTC = () => {
     engagementScore: 0
   });
 
+  // AssemblyAI integration
+  const [assemblyAI, setAssemblyAI] = useState(null);
+  const [assemblyConnected, setAssemblyConnected] = useState(false);
+  const [conversationData, setConversationData] = useState(null);
+  const [showPostCallDashboard, setShowPostCallDashboard] = useState(false);
+  const [showCallHistory, setShowCallHistory] = useState(false);
+  const [realtimeInsights, setRealtimeInsights] = useState([]);
+  
   const [alerts, setAlerts] = useState([]);
   const [speechSentiment, setSpeechSentiment] = useState({ score: 0, text: '' });
+
+  // Speech emotion detection
+  const [speechAnalyzer, setSpeechAnalyzer] = useState(null);
+  const [currentSpeechEmotion, setCurrentSpeechEmotion] = useState(null);
+  const [speechEmotionStats, setSpeechEmotionStats] = useState(null);
+  const [isAnalyzingSpeech, setIsAnalyzingSpeech] = useState(false);
+  const [demoMode, setDemoMode] = useState(false);
+  const [showRoleManagement, setShowRoleManagement] = useState(false);
 
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
@@ -96,12 +154,30 @@ const EmotionVideoCallWithWebRTC = () => {
   const localStreamRef = useRef(null);
   const remotePeerIdRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
-  
-  // ✨ NEW: AssemblyAI refs
-  const assemblyAIRef = useRef(null);
+  const demoIntervalRef = useRef(null);
+  const assemblyStartedRef = useRef(false); // ✨ Prevent multiple AssemblyAI starts
+  const assemblyAIRef = useRef(null); // ✅ FIX: Store AssemblyAI service in ref for immediate access
+
+  // ✅ DEBUG: Log environment variables on component mount
+  useEffect(() => {
+    console.log('🔍 Environment Variables Check:');
+    console.log('   VITE_ASSEMBLYAI_API_KEY:', getEnvVar('VITE_ASSEMBLYAI_API_KEY') ? '✅ SET' : '❌ NOT SET');
+    console.log('   VITE_METERED_API_KEY:', getEnvVar('VITE_METERED_API_KEY') ? '✅ SET' : '❌ NOT SET');
+    console.log('   VITE_SERVER_URL:', getEnvVar('VITE_SERVER_URL') ? '✅ SET' : '❌ NOT SET');
+  }, []);
+
+  // Auto-start speech analysis when connected
+  useEffect(() => {
+    if (callActive && isConnected && speechAnalyzer && !isAnalyzingSpeech) {
+      console.log('🎤 Auto-starting speech analysis...');
+      setTimeout(() => {
+        startSpeechAnalysis();
+      }, 2000);
+    }
+  }, [callActive, isConnected, speechAnalyzer]);
 
   useEffect(() => {
-    loadAvailableDevices();
+    // Moved to startCall to avoid premature device access request
   }, []);
 
   const loadAvailableDevices = async () => {
@@ -156,92 +232,140 @@ const EmotionVideoCallWithWebRTC = () => {
   const changeVideoDevice = async (deviceId) => {
     console.log('📹 Changing video device to:', deviceId);
 
-    setSelectedDevices(prev => ({
-      ...prev,
-      videoDeviceId: deviceId
-    }));
+    if (!localStreamRef.current || !callActive) {
+      // Just update the selection if not in a call
+      setSelectedDevices(prev => ({
+        ...prev,
+        videoDeviceId: deviceId
+      }));
+      return;
+    }
 
-    if (localStreamRef.current && callActive) {
-      try {
-        const newStream = await navigator.mediaDevices.getUserMedia({
-          video: { deviceId: { exact: deviceId } },
-          audio: { deviceId: { exact: selectedDevices.audioDeviceId } }
-        });
+    try {
+      // Get current audio device ID
+      const currentAudioDeviceId = localStreamRef.current.getAudioTracks()[0]?.getSettings()?.deviceId || 
+                                     selectedDevices.audioDeviceId;
 
-        if (peerConnectionRef.current) {
-          const videoTrack = newStream.getVideoTracks()[0];
-          const sender = peerConnectionRef.current
-            .getSenders()
-            .find(s => s.track && s.track.kind === 'video');
+      const newStream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: { exact: deviceId } },
+        audio: { deviceId: currentAudioDeviceId ? { exact: currentAudioDeviceId } : true }
+      });
 
-          if (sender) {
-            await sender.replaceTrack(videoTrack);
-            console.log('✅ Video track replaced in peer connection');
-          }
+      // Update the video track in peer connection
+      if (peerConnectionRef.current) {
+        const videoTrack = newStream.getVideoTracks()[0];
+        const sender = peerConnectionRef.current
+          .getSenders()
+          .find(s => s.track && s.track.kind === 'video');
+
+        if (sender) {
+          await sender.replaceTrack(videoTrack);
+          console.log('✅ Video track replaced in peer connection');
         }
-
-        const oldVideoTrack = localStreamRef.current.getVideoTracks()[0];
-        if (oldVideoTrack) {
-          oldVideoTrack.stop();
-        }
-
-        localStreamRef.current.removeTrack(localStreamRef.current.getVideoTracks()[0]);
-        localStreamRef.current.addTrack(newStream.getVideoTracks()[0]);
-
-        setLocalStream(newStream);
-        localStreamRef.current = newStream;
-
-        addAlert('Camera changed successfully', 'info');
-      } catch (error) {
-        console.error('❌ Error changing video device:', error);
-        addAlert('Failed to change camera', 'alert');
       }
+
+      // Stop old video track
+      const oldVideoTrack = localStreamRef.current.getVideoTracks()[0];
+      if (oldVideoTrack) {
+        oldVideoTrack.stop();
+      }
+
+      // Keep the audio track from old stream
+      const oldAudioTrack = localStreamRef.current.getAudioTracks()[0];
+      
+      // Create a new combined stream
+      const combinedStream = new MediaStream([
+        newStream.getVideoTracks()[0],
+        oldAudioTrack
+      ]);
+
+      // Stop the audio track from new stream (we're using the old one)
+      newStream.getAudioTracks().forEach(track => track.stop());
+
+      setLocalStream(combinedStream);
+      localStreamRef.current = combinedStream;
+
+      // Update selected devices state
+      setSelectedDevices(prev => ({
+        ...prev,
+        videoDeviceId: deviceId
+      }));
+
+      addAlert('Camera changed successfully', 'info');
+      console.log('✅ Camera changed successfully');
+    } catch (error) {
+      console.error('❌ Error changing video device:', error);
+      addAlert('Failed to change camera: ' + error.message, 'alert');
     }
   };
 
   const changeAudioDevice = async (deviceId) => {
     console.log('🎤 Changing audio device to:', deviceId);
 
-    setSelectedDevices(prev => ({
-      ...prev,
-      audioDeviceId: deviceId
-    }));
+    if (!localStreamRef.current || !callActive) {
+      // Just update the selection if not in a call
+      setSelectedDevices(prev => ({
+        ...prev,
+        audioDeviceId: deviceId
+      }));
+      return;
+    }
 
-    if (localStreamRef.current && callActive) {
-      try {
-        const newStream = await navigator.mediaDevices.getUserMedia({
-          video: { deviceId: { exact: selectedDevices.videoDeviceId } },
-          audio: { deviceId: { exact: deviceId } }
-        });
+    try {
+      // Get current video device ID
+      const currentVideoDeviceId = localStreamRef.current.getVideoTracks()[0]?.getSettings()?.deviceId || 
+                                     selectedDevices.videoDeviceId;
 
-        if (peerConnectionRef.current) {
-          const audioTrack = newStream.getAudioTracks()[0];
-          const sender = peerConnectionRef.current
-            .getSenders()
-            .find(s => s.track && s.track.kind === 'audio');
+      const newStream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: currentVideoDeviceId ? { exact: currentVideoDeviceId } : true },
+        audio: { deviceId: { exact: deviceId } }
+      });
 
-          if (sender) {
-            await sender.replaceTrack(audioTrack);
-            console.log('✅ Audio track replaced in peer connection');
-          }
+      // Update the audio track in peer connection
+      if (peerConnectionRef.current) {
+        const audioTrack = newStream.getAudioTracks()[0];
+        const sender = peerConnectionRef.current
+          .getSenders()
+          .find(s => s.track && s.track.kind === 'audio');
+
+        if (sender) {
+          await sender.replaceTrack(audioTrack);
+          console.log('✅ Audio track replaced in peer connection');
         }
-
-        const oldAudioTrack = localStreamRef.current.getAudioTracks()[0];
-        if (oldAudioTrack) {
-          oldAudioTrack.stop();
-        }
-
-        localStreamRef.current.removeTrack(localStreamRef.current.getAudioTracks()[0]);
-        localStreamRef.current.addTrack(newStream.getAudioTracks()[0]);
-
-        setLocalStream(newStream);
-        localStreamRef.current = newStream;
-
-        addAlert('Microphone changed successfully', 'info');
-      } catch (error) {
-        console.error('❌ Error changing audio device:', error);
-        addAlert('Failed to change microphone', 'alert');
       }
+
+      // Stop old audio track
+      const oldAudioTrack = localStreamRef.current.getAudioTracks()[0];
+      if (oldAudioTrack) {
+        oldAudioTrack.stop();
+      }
+
+      // Keep the video track from old stream
+      const oldVideoTrack = localStreamRef.current.getVideoTracks()[0];
+      
+      // Create a new combined stream
+      const combinedStream = new MediaStream([
+        oldVideoTrack,
+        newStream.getAudioTracks()[0]
+      ]);
+
+      // Stop the video track from new stream (we're using the old one)
+      newStream.getVideoTracks().forEach(track => track.stop());
+
+      setLocalStream(combinedStream);
+      localStreamRef.current = combinedStream;
+
+      // Update selected devices state
+      setSelectedDevices(prev => ({
+        ...prev,
+        audioDeviceId: deviceId
+      }));
+
+      addAlert('Microphone changed successfully', 'info');
+      console.log('✅ Microphone changed successfully');
+    } catch (error) {
+      console.error('❌ Error changing audio device:', error);
+      addAlert('Failed to change microphone: ' + error.message, 'alert');
     }
   };
 
@@ -322,6 +446,7 @@ const EmotionVideoCallWithWebRTC = () => {
     } catch (error) {
       console.error('❌ Failed to fetch ICE servers:', error);
       addAlert("Failed to get TURN servers, connection may fail.", "alert");
+      // Fallback to public STUN servers
       return {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
@@ -332,7 +457,7 @@ const EmotionVideoCallWithWebRTC = () => {
   };
 
   const connectToServer = () => {
-    const serverUrl = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001';
+    const serverUrl = getEnvVar('VITE_SERVER_URL') || 'http://localhost:3001';
     console.log('🔧 Connecting to server:', serverUrl);
 
     socketRef.current = io(serverUrl, {
@@ -416,99 +541,6 @@ const EmotionVideoCallWithWebRTC = () => {
     });
   };
 
-  // ✨ NEW: Initialize AssemblyAI when remote stream is received
-  const initializeAssemblyAI = async (remoteAudioStream) => {
-    if (!transcriptEnabled) {
-      console.log('⏭️ Transcription disabled, skipping AssemblyAI');
-      return;
-    }
-
-    try {
-      console.log('🎙️ Initializing AssemblyAI for remote audio...');
-      setAssemblyAIStatus('connecting');
-
-      // Get temporary token from backend
-      const serverUrl = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001';
-      const token = await getAssemblyAIToken(serverUrl);
-      console.log('✅ Got AssemblyAI token');
-
-      // Create and connect AssemblyAI service
-      const assemblyAI = new AssemblyAIService(token);
-      await assemblyAI.connect();
-      
-      setAssemblyAIStatus('connected');
-      console.log('✅ AssemblyAI connected');
-
-      // Start processing remote audio
-      await assemblyAI.startProcessing(
-        remoteAudioStream,
-        // On transcript callback
-        (text, fullData) => {
-          console.log('📝 Transcript received:', text);
-          
-          // Update live transcript
-          setLiveTranscript(text);
-          
-          // Add to history
-          setTranscriptHistory(prev => [...prev, {
-            text,
-            timestamp: Date.now(),
-            id: Date.now()
-          }].slice(-50)); // Keep last 50 transcripts
-
-          // Analyze emotion from text
-          const emotionAnalysis = EmotionAnalyzer.analyzeEmotionFromText(text);
-          console.log('🎭 Emotion analysis:', emotionAnalysis);
-
-          // Update remote emotions based on speech
-          setRemoteEmotions(prev => ({
-            primary: emotionAnalysis.emotion,
-            confidence: emotionAnalysis.confidence,
-            history: [...prev.history.slice(-99), {
-              primary: emotionAnalysis.emotion,
-              confidence: emotionAnalysis.confidence,
-              timestamp: Date.now()
-            }]
-          }));
-
-          // Check for distress
-          if (emotionAnalysis.isDistressed) {
-            addAlert('⚠️ Distress detected in patient speech: ' + text, 'alert');
-          }
-        },
-        // On sentiment callback
-        (sentiment) => {
-          console.log('💭 Sentiment:', sentiment);
-          
-          const distressCheck = EmotionAnalyzer.detectDistressFromSentiment(sentiment);
-          if (distressCheck.isDistressed) {
-            addAlert(distressCheck.message, distressCheck.level === 'high' ? 'alert' : 'warning');
-          }
-
-          setSpeechSentiment({
-            score: sentiment.sentiment === 'positive' ? 0.7 : sentiment.sentiment === 'negative' ? -0.7 : 0,
-            text: sentiment.sentiment
-          });
-        },
-        // On error callback
-        (error) => {
-          console.error('❌ AssemblyAI error:', error);
-          setAssemblyAIStatus('error');
-          addAlert('Speech transcription error: ' + error, 'warning');
-        }
-      );
-
-      assemblyAIRef.current = assemblyAI;
-      console.log('✅ AssemblyAI processing started on remote audio');
-      addAlert('Real-time transcription active', 'info');
-
-    } catch (error) {
-      console.error('❌ Failed to initialize AssemblyAI:', error);
-      setAssemblyAIStatus('error');
-      addAlert('Failed to start speech transcription: ' + error.message, 'warning');
-    }
-  };
-
   const createPeerConnection = async (remotePeerId, stream) => {
     console.log('🔗 Creating peer connection for:', remotePeerId);
 
@@ -523,6 +555,7 @@ const EmotionVideoCallWithWebRTC = () => {
     const peerConnection = new RTCPeerConnection(iceServersConfig);
     peerConnectionRef.current = peerConnection;
 
+    // ✨ NEW: Monitor ICE candidate statistics
     let localCandidateCount = 0;
     let remoteCandidateCount = 0;
 
@@ -550,8 +583,73 @@ const EmotionVideoCallWithWebRTC = () => {
         startAnalysis();
         startStatisticsTracking();
 
-        // ✨ Initialize AssemblyAI with remote stream
-        initializeAssemblyAI(remoteStreamReceived);
+        // ✨ CRITICAL FIX: Enhanced AssemblyAI startup with full diagnostics
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        console.log('🔍 ASSEMBLYAI STARTUP CHECK');
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        console.log('1. assemblyAI state exists?', !!assemblyAI);
+        console.log('   assemblyAIRef.current exists?', !!assemblyAIRef.current);
+        console.log('   Type:', typeof assemblyAIRef.current);
+        console.log('   Value:', assemblyAIRef.current);
+        
+        console.log('2. remoteStreamReceived exists?', !!remoteStreamReceived);
+        console.log('   Tracks:', remoteStreamReceived?.getTracks().length);
+        console.log('   Audio tracks:', remoteStreamReceived?.getAudioTracks().length);
+        
+        console.log('3. assemblyStartedRef.current?', assemblyStartedRef.current);
+        
+        console.log('4. Full condition result:', 
+          !!assemblyAIRef.current && !!remoteStreamReceived && !assemblyStartedRef.current);
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+        // ✅ FIX: Use assemblyAIRef.current instead of assemblyAI state
+        if (assemblyAIRef.current && remoteStreamReceived && !assemblyStartedRef.current) {
+          assemblyStartedRef.current = true;
+          console.log('✅ ALL CONDITIONS MET! Starting AssemblyAI...');
+          console.log('🎤 Starting AssemblyAI transcription with REMOTE PATIENT audio');
+          console.log('   Stream ID:', remoteStreamReceived.id);
+          console.log('   Audio tracks:', remoteStreamReceived.getAudioTracks().length);
+          
+          assemblyAIRef.current.startRealtimeTranscription(remoteStreamReceived)
+            .then(() => {
+              setAssemblyConnected(true);
+              console.log('✅✅✅ AssemblyAI transcription started successfully!');
+              console.log('   Ready to transcribe patient audio');
+            })
+            .catch(error => {
+              console.error('❌❌❌ AssemblyAI start FAILED!');
+              console.error('   Error:', error);
+              console.error('   Message:', error.message);
+              console.error('   Stack:', error.stack);
+              assemblyStartedRef.current = false;
+              addAlert('AssemblyAI failed to start: ' + error.message, 'alert');
+            });
+        } else {
+          console.error('❌ CONDITION CHECK FAILED!');
+          console.error('   Cannot start AssemblyAI');
+          
+          if (!assemblyAIRef.current) {
+            console.error('   ❌ Problem: assemblyAIRef.current is NULL/undefined');
+            console.error('   → assemblyAI state:', assemblyAI);
+            console.error('   → This is a React state timing issue');
+            console.error('   → The service was created but state hasn\'t updated yet');
+          }
+          
+          if (!remoteStreamReceived) {
+            console.error('   ❌ Problem: remoteStreamReceived is NULL');
+          }
+          
+          if (assemblyStartedRef.current) {
+            console.warn('   ⚠️ Info: AssemblyAI already started (ref = true)');
+          }
+        }
+                
+        // 🎤 Initialize speech analyzer on REMOTE stream (patient's audio)
+        if (canViewEmotions()) {
+          initializeSpeechAnalyzer(remoteStreamReceived);
+        } else {
+          console.log('ℹ️ Speech analysis not enabled for this user role');
+        }
         
         event.track.onended = () => {
           console.log('⚠️ Track ended:', event.track.kind);
@@ -595,6 +693,7 @@ const EmotionVideoCallWithWebRTC = () => {
         console.log('✅✅✅ Peer connection ESTABLISHED!');
         setIsConnected(true);
 
+        // ✨ Log selected ICE candidate pair
         peerConnection.getStats().then(stats => {
           stats.forEach(report => {
             if (report.type === 'candidate-pair' && report.state === 'succeeded') {
@@ -637,6 +736,7 @@ const EmotionVideoCallWithWebRTC = () => {
               peerConnection.iceConnectionState === 'failed') {
             console.log('❌ ICE connection timeout - restarting');
 
+            // ✨ Log why connection failed
             peerConnection.getStats().then(stats => {
               console.log('📊 Connection stats at failure:');
               stats.forEach(report => {
@@ -692,13 +792,6 @@ const EmotionVideoCallWithWebRTC = () => {
     setIsConnected(false);
     stopAnalysis();
     stopStatisticsTracking();
-    
-    // ✨ Stop AssemblyAI
-    if (assemblyAIRef.current) {
-      assemblyAIRef.current.stop();
-      assemblyAIRef.current = null;
-      setAssemblyAIStatus('disconnected');
-    }
     
     setTimeout(() => {
       if (remotePeerIdRef.current && localStreamRef.current && currentRoomId) {
@@ -801,13 +894,6 @@ const EmotionVideoCallWithWebRTC = () => {
     stopAnalysis();
     stopStatisticsTracking();
 
-    // ✨ Stop AssemblyAI
-    if (assemblyAIRef.current) {
-      assemblyAIRef.current.stop();
-      assemblyAIRef.current = null;
-      setAssemblyAIStatus('disconnected');
-    }
-
     if (peerConnectionRef.current) {
       peerConnectionRef.current.close();
       peerConnectionRef.current = null;
@@ -818,11 +904,74 @@ const EmotionVideoCallWithWebRTC = () => {
     addAlert('Remote user disconnected', 'warning');
   };
 
+  const startSpeechAnalysis = () => {
+    if (!speechAnalyzer) {
+      console.warn('Speech analyzer not initialized');
+      return;
+    }
+
+    if (demoMode) {
+      console.log('🎭 Starting speech analysis in DEMO mode');
+      setIsAnalyzingSpeech(true);
+      demoIntervalRef.current = setInterval(() => {
+        const demoEmotion = speechAnalyzer.generateDemoEmotion();
+        setCurrentSpeechEmotion(demoEmotion);
+        
+        speechAnalyzer.emotionHistory.push({
+          emotion: demoEmotion.emotion,
+          confidence: demoEmotion.confidence,
+          timestamp: Date.now(),
+          transcript: demoEmotion.transcript
+        });
+        
+        const stats = speechAnalyzer.getEmotionStatistics();
+        setSpeechEmotionStats(stats);
+        
+        if (['sad', 'angry', 'anxious', 'lonely'].includes(demoEmotion.emotion)) {
+          if (demoEmotion.confidence > 0.7) {
+            addAlert(`Patient expressing ${demoEmotion.emotion} emotion`, 'warning');
+          }
+        }
+      }, 3000);
+    } else {
+      console.log('🎤 Starting speech analysis in REAL mode');
+      setIsAnalyzingSpeech(true);
+      speechAnalyzer.startListening((emotionData) => {
+        console.log('🎭 Speech emotion detected:', emotionData);
+        setCurrentSpeechEmotion(emotionData);
+        
+        const stats = speechAnalyzer.getEmotionStatistics();
+        setSpeechEmotionStats(stats);
+
+        if (['sad', 'angry', 'anxious', 'lonely'].includes(emotionData.emotion)) {
+          if (emotionData.confidence > 0.7) {
+            addAlert(`Patient expressing ${emotionData.emotion} emotion: "${emotionData.transcript}"`, 'alert');
+          }
+        }
+      });
+    }
+  };
+
+  const toggleDemoMode = () => {
+    const newDemoMode = !demoMode;
+    console.log(`🔄 Switching to ${newDemoMode ? 'DEMO' : 'REAL'} mode`);
+    
+    stopSpeechAnalysis();
+    setDemoMode(newDemoMode);
+    
+    if (callActive && isConnected) {
+      setTimeout(() => {
+        startSpeechAnalysis();
+      }, 500);
+    }
+  };
+
   const startCall = async () => {
     if (!roomId.trim()) {
       alert('Please enter a room ID');
       return;
     }
+    await loadAvailableDevices();
 
     try {
       console.log('🎥 Starting call...');
@@ -850,7 +999,33 @@ const EmotionVideoCallWithWebRTC = () => {
       setCallStatistics(prev => ({
         ...prev,
         startTime: Date.now()
+       
       }));
+
+      // ✨ Initialize AssemblyAI
+      const service = await initializeAssemblyAI();
+      
+      // ✅ FIX: Store in ref immediately for synchronous access
+      if (service) {
+        assemblyAIRef.current = service;
+        console.log('✅ AssemblyAI service stored in ref for immediate use');
+      }
+      
+      // 🔍 CRITICAL DEBUG: Check what was returned
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log('🔍 initializeAssemblyAI RESULT:');
+      console.log('   Returned:', service);
+      console.log('   Is null?', service === null);
+      console.log('   Type:', typeof service);
+      if (service) {
+        console.log('   Has startRealtimeTranscription?', 
+          typeof service.startRealtimeTranscription === 'function');
+        console.log('   Stored in ref:', !!assemblyAIRef.current);
+      }
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    
+      // Speech analyzer will be initialized when remote stream connects
+      console.log('📞 Call started, waiting for remote stream to initialize speech analysis');
 
       connectToServer();
 
@@ -867,6 +1042,39 @@ const EmotionVideoCallWithWebRTC = () => {
 
   const endCall = () => {
     console.log('📞 Ending call');
+
+    // ✨ Get analytics from AssemblyAI BEFORE cleanup
+    let analytics = null;
+    const patientId = remotePeerIdRef.current; // Save before cleanup
+    const callDuration = callStatistics.startTime 
+      ? Math.floor((Date.now() - callStatistics.startTime) / 1000)
+      : 0;
+
+    if (assemblyAIRef.current && assemblyConnected) {
+      try {
+        console.log('📊 Collecting analytics...');
+        assemblyAIRef.current.stopRealtimeTranscription();
+        analytics = assemblyAIRef.current.getConversationAnalytics();
+        
+        // Add call duration to analytics
+        if (analytics) {
+          analytics.duration = callDuration;
+          analytics.patientUserId = patientId || 'unknown';
+        }
+        
+        setConversationData(analytics);
+        console.log('✅ Analytics retrieved:', {
+          messages: analytics.messages?.length || 0,
+          sentimentAvg: analytics.sentiment?.averageSentiment || 0,
+          duration: callDuration,
+          patientId: patientId || 'none'
+        });
+      } catch (error) {
+        console.error('❌ Error getting analytics:', error);
+      }
+    } else {
+      console.warn('⚠️ No analytics available - AssemblyAI not connected');
+    }
     
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
@@ -874,13 +1082,6 @@ const EmotionVideoCallWithWebRTC = () => {
     
     stopAnalysis();
     stopStatisticsTracking();
-
-    // ✨ Stop AssemblyAI
-    if (assemblyAIRef.current) {
-      assemblyAIRef.current.stop();
-      assemblyAIRef.current = null;
-      setAssemblyAIStatus('disconnected');
-    }
 
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(track => {
@@ -898,6 +1099,14 @@ const EmotionVideoCallWithWebRTC = () => {
       socketRef.current.disconnect();
     }
 
+    // Cleanup speech analysis
+    stopSpeechAnalysis();
+    if (speechAnalyzer) {
+      speechAnalyzer.cleanup();
+      setSpeechAnalyzer(null);
+    }
+    setSpeechEmotionStats(null);
+
     setLocalStream(null);
     setRemoteStream(null);
     setCallActive(false);
@@ -906,12 +1115,17 @@ const EmotionVideoCallWithWebRTC = () => {
     setAnalyzing(false);
     setAlerts([]);
     setShowDeviceSettings(false);
-    setLiveTranscript('');
-    setTranscriptHistory([]);
     localStreamRef.current = null;
     peerConnectionRef.current = null;
     socketRef.current = null;
-    remotePeerIdRef.current = null;
+    
+    // ✨ Reset AssemblyAI state for next call
+    assemblyStartedRef.current = false;
+    setAssemblyConnected(false);
+    
+    // Don't clear remotePeerIdRef yet - needed for dashboard
+    // remotePeerIdRef.current = null;
+    
     setIceStats({ localCandidates: 0, remoteCandidates: 0, selectedPair: null });
     
     setConnectionStatus({
@@ -919,6 +1133,22 @@ const EmotionVideoCallWithWebRTC = () => {
       peer: 'disconnected',
       ice: 'new'
     });
+
+    // ✨ Show dashboard for caregivers/superadmins
+    console.log('🎯 Checking dashboard conditions:', {
+      hasAnalytics: !!analytics,
+      isAdmin: isAdmin(),
+      patientId: patientId
+    });
+    
+    if (analytics && patientId) {
+      console.log('✅ Opening post-call dashboard');
+      setShowPostCallDashboard(true);
+    } else {
+      console.warn('⚠️ Dashboard not shown:', {
+        reason: !analytics ? 'No analytics' : !patientId ? 'No patient ID' : 'Not admin'
+      });
+    }
   };
 
   const toggleVideo = () => {
@@ -1075,39 +1305,32 @@ const EmotionVideoCallWithWebRTC = () => {
     }
 
     analysisIntervalRef.current = setInterval(() => {
-      const localEmotion = detectEmotion(localVideoRef.current, true);
-      // Note: Remote emotion is now primarily driven by AssemblyAI transcript analysis
-      // but we can still do basic visual analysis as backup
-      const remoteEmotion = detectEmotion(remoteVideoRef.current, false);
+      // Only analyze emotions if user has permission (superadmin or caregiver)
+      if (canViewEmotions()) {
+        // Only analyze the remote user's (standard user's) emotions
+        const remoteEmotion = detectEmotion(remoteVideoRef.current, false);
 
-      if (localEmotion) {
-        setLocalEmotions(prev => ({
-          ...localEmotion,
-          history: [...prev.history.slice(-99), localEmotion]
-        }));
-      }
+        if (remoteEmotion) {
+          setRemoteEmotions(prev => ({
+            ...remoteEmotion,
+            history: [...prev.history.slice(-99), remoteEmotion]
+          }));
 
-      // Only update visual emotion if we don't have recent transcript-based emotion
-      if (remoteEmotion && !transcriptEnabled) {
-        setRemoteEmotions(prev => {
-          // Only update if no recent transcript emotion (within last 5 seconds)
-          const lastTranscriptTime = prev.history.length > 0 ? prev.history[prev.history.length - 1].timestamp : 0;
-          if (Date.now() - lastTranscriptTime > 5000) {
-            return {
-              ...remoteEmotion,
-              history: [...prev.history.slice(-99), remoteEmotion]
-            };
+          // Alert caregivers/admins about concerning emotions
+          if (remoteEmotion.primary === 'sad' && remoteEmotion.confidence > 0.7) {
+            addAlert('User appears distressed', 'alert');
+          } else if (remoteEmotion.primary === 'angry' && remoteEmotion.confidence > 0.75) {
+            addAlert('Elevated tension detected', 'warning');
+          } else if (remoteEmotion.primary === 'fearful' && remoteEmotion.confidence > 0.7) {
+            addAlert('User may be anxious or fearful', 'alert');
           }
-          return prev;
-        });
-
-        if (remoteEmotion.primary === 'sad' && remoteEmotion.confidence > 0.7) {
-          addAlert('Patient appears distressed (visual)', 'alert');
-        } else if (remoteEmotion.primary === 'angry' && remoteEmotion.confidence > 0.75) {
-          addAlert('Elevated tension detected (visual)', 'warning');
-        } else if (remoteEmotion.primary === 'fearful' && remoteEmotion.confidence > 0.7) {
-          addAlert('Patient may be anxious or fearful (visual)', 'alert');
         }
+
+        const sentimentScore = Math.random() * 2 - 1;
+        setSpeechSentiment({
+          score: sentimentScore,
+          detectedPhrase: sentimentScore < -0.5 ? 'Negative tone detected' : null
+        });
       }
     }, 2000);
   };
@@ -1133,6 +1356,128 @@ const EmotionVideoCallWithWebRTC = () => {
     navigator.clipboard.writeText(currentRoomId);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  // Initialize AssemblyAI
+const initializeAssemblyAI = async () => {
+  const apiKey = getEnvVar('VITE_ASSEMBLYAI_API_KEY');
+
+  console.log('🔑 AssemblyAI API Key Check:');
+  console.log('   Key exists:', !!apiKey);
+  console.log('   Key length:', apiKey?.length || 0);
+  console.log('   Key preview:', apiKey ? `${apiKey.substring(0, 10)}...${apiKey.substring(apiKey.length - 5)}` : 'undefined');
+
+  if (!apiKey || apiKey === 'undefined' || apiKey === 'null') {
+    console.error('❌ AssemblyAI API key not configured or invalid');
+    console.error('   Please set VITE_ASSEMBLYAI_API_KEY in your Vercel environment variables');
+    addAlert('AssemblyAI not configured - transcription disabled', 'warning');
+    return null;
+  }
+
+  try {
+    const service = new AssemblyAIService(apiKey);
+    
+    // Set up callbacks
+    service.onMessage((message) => {
+      console.log('💬 Transcript:', message.text);
+    });
+
+    service.onSentiment((sentiment) => {
+      console.log('😊 Sentiment:', sentiment.suggested, sentiment.polarity.score);
+      
+      if (sentiment.distress) {
+        console.warn('⚠️ Distress detected!');
+        addAlert('Distress indicators detected', 'warning');
+      }
+
+      setRealtimeInsights(prev => [...prev.slice(-9), {
+        type: 'sentiment',
+        text: sentiment.text,
+        sentiment: sentiment.suggested,
+        score: sentiment.polarity.score,
+        distress: sentiment.distress,
+        timestamp: Date.now(),
+      }]);
+    });
+
+    setAssemblyAI(service);
+    console.log('✅ AssemblyAI initialized successfully');
+    return service;
+  } catch (error) {
+    console.error('❌ AssemblyAI initialization failed:', error);
+    addAlert('Failed to initialize AssemblyAI', 'alert');
+    return null;
+  }
+};
+
+  
+  // Initialize speech analyzer with AI - for REMOTE audio only
+  const initializeSpeechAnalyzer = async (remoteStream) => {
+    if (!remoteStream) {
+      console.warn('⚠️ No remote stream provided for speech analysis');
+      return;
+    }
+
+    try {
+      console.log('🎤 Initializing analyzer for REMOTE AUDIO (patient)');
+      // Note: Audio analysis for emotion detection (separate from AssemblyAI transcription)
+      const analyzer = new EnhancedAIEmotionAnalyzerRemote(null);
+      const initialized = await analyzer.initialize(remoteStream);
+
+      if (!initialized) {
+        console.warn('⚠️ Audio analysis not supported');
+        setDemoMode(true);
+      } else {
+        console.log('✅ Remote audio analyzer initialized successfully');
+        console.log('   Analyzing: PATIENT audio (remote stream)');
+        console.log('   NOT analyzing: Caregiver audio (local stream)');
+        setDemoMode(false);
+        setSpeechAnalyzer(analyzer);
+        
+        // Start listening to remote audio
+        analyzer.startListening((emotionData) => {
+          console.log('📊 REMOTE Patient Emotion Detection:');
+          console.log('   Emotion:', emotionData.emotion);
+          console.log('   Confidence:', emotionData.confidence);
+          console.log('   Transcript:', emotionData.transcript);
+          console.log('   Voice Metrics:', emotionData.voiceMetrics);
+          
+          // Show AI insight if available
+          if (emotionData.aiInsight) {
+            console.log('🤖 AI Analysis from Remote Audio:');
+            console.log('   AI Emotion:', emotionData.aiInsight.emotion);
+            console.log('   AI Confidence:', emotionData.aiInsight.confidence);
+            console.log('   AI Reasoning:', emotionData.aiInsight.reasoning);
+          }
+          
+          setCurrentSpeechEmotion(emotionData);
+          
+          // Update statistics
+          const stats = analyzer.getEmotionStatistics();
+          setSpeechEmotionStats(stats);
+        });
+
+        setIsAnalyzingSpeech(true);
+        console.log('🎤 Speech analysis ACTIVE on REMOTE patient audio');
+      }
+    } catch (error) {
+      console.error('❌ Error initializing remote audio analyzer:', error);
+      addAlert('Failed to initialize speech analysis', 'warning');
+    }
+  };
+
+  // Stop speech analysis
+  const stopSpeechAnalysis = () => {
+    if (speechAnalyzer) {
+      speechAnalyzer.stopListening();
+      setIsAnalyzingSpeech(false);
+      console.log('🛑 Stopped speech analysis');
+    }
+  };
+
+  // Check if current user can view emotion analysis
+  const canViewEmotions = () => {
+    return userProfile?.role === 'superadmin' || userProfile?.role === 'caregiver';
   };
 
   const getEmotionIcon = (emotion) => {
@@ -1214,114 +1559,37 @@ const EmotionVideoCallWithWebRTC = () => {
     }
   };
 
-  const getAssemblyAIStatusColor = (status) => {
-    switch (status) {
-      case 'connected':
-        return 'text-green-600';
-      case 'connecting':
-        return 'text-yellow-600';
-      case 'disconnected':
-        return 'text-gray-600';
-      case 'error':
-        return 'text-red-600';
-      default:
-        return 'text-gray-600';
-    }
-  };
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
       <div className="container mx-auto px-4 py-8">
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-gray-800 mb-2 flex items-center justify-center gap-2">
             <Heart className="w-10 h-10 text-red-500" />
-            Emotion Video Call + AssemblyAI
+            Emotion Video Call
           </h1>
-          <p className="text-gray-600">Real-time transcription and emotion analysis for telehealth</p>
+          <p className="text-gray-600">Empathetic video communication with emotion analytics</p>
+          
+          {/* Superadmin: Manage Users Button */}
+          {userProfile?.role === 'superadmin' && !callActive && (
+            <button
+              onClick={() => setShowRoleManagement(true)}
+              className="mt-4 inline-flex items-center gap-2 px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-semibold transition-colors shadow-lg"
+            >
+              <Users className="w-5 h-5" />
+              Manage User Roles
+            </button>
+          )}
         </div>
 
         {!callActive ? (
           <div className="max-w-md mx-auto space-y-4">
-            <div className="bg-white rounded-2xl shadow-xl p-8">
-              <h3 className="font-semibold text-lg mb-4 flex items-center gap-2">
-                <Settings className="w-5 h-5" />
-                Device Settings
-              </h3>
-
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  📹 Camera
-                </label>
-                <select
-                  value={selectedDevices.videoDeviceId}
-                  onChange={(e) => setSelectedDevices(prev => ({
-                    ...prev,
-                    videoDeviceId: e.target.value
-                  }))}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                  {availableDevices.videoInputs.map(device => (
-                    <option key={device.deviceId} value={device.deviceId}>
-                      {device.label || `Camera ${availableDevices.videoInputs.indexOf(device) + 1}`}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  🎤 Microphone
-                </label>
-                <select
-                  value={selectedDevices.audioDeviceId}
-                  onChange={(e) => setSelectedDevices(prev => ({
-                    ...prev,
-                    audioDeviceId: e.target.value
-                  }))}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                  {availableDevices.audioInputs.map(device => (
-                    <option key={device.deviceId} value={device.deviceId}>
-                      {device.label || `Microphone ${availableDevices.audioInputs.indexOf(device) + 1}`}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  🔊 Speaker
-                </label>
-                <select
-                  value={selectedDevices.audioOutputDeviceId}
-                  onChange={(e) => setSelectedDevices(prev => ({
-                    ...prev,
-                    audioOutputDeviceId: e.target.value
-                  }))}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                  {availableDevices.audioOutputs.map(device => (
-                    <option key={device.deviceId} value={device.deviceId}>
-                      {device.label || `Speaker ${availableDevices.audioOutputs.indexOf(device) + 1}`}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <button
-                onClick={loadAvailableDevices}
-                className="w-full px-4 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
-              >
-                🔄 Refresh Devices
-              </button>
-            </div>
-
             <div className="bg-white rounded-2xl shadow-xl p-8">
               <div className="mb-6">
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Room ID
                 </label>
                 <input
+                  id="room-id-input"
                   type="text"
                   value={roomId}
                   onChange={(e) => setRoomId(e.target.value)}
@@ -1334,39 +1602,92 @@ const EmotionVideoCallWithWebRTC = () => {
               </div>
 
               <div className="mb-6">
-                <label htmlFor="metered-api-key" className="block text-sm font-medium text-gray-700 mb-2">
-                  Metered API Key
-                </label>
-                <input
-                  id="metered-api-key"
-                  type="text"
-                  value={meteredApiKey}
-                  onChange={(e) => setMeteredApiKey(e.target.value)}
-                  placeholder="Enter your Metered API key"
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-                <p className="mt-2 text-sm text-gray-500">
-                  Required for reliable connection. Get a free key from <a href="https://www.metered.ca/tools/openrelay" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Metered Open Relay</a>.
-                </p>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Metered API Key
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setShowMeteredInput(!showMeteredInput)}
+                    className="text-xs text-blue-600 hover:text-blue-700 underline"
+                  >
+                    {showMeteredInput ? 'Hide' : 'Manual Input'}
+                  </button>
+                </div>
+                
+                {showMeteredInput ? (
+                  <>
+                    <input
+                      id="metered-api-key"
+                      type="text"
+                      value={meteredApiKey}
+                      onChange={(e) => setMeteredApiKey(e.target.value)}
+                      placeholder="Enter your Metered API key"
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                    <p className="mt-2 text-sm text-gray-500">
+                      Required for reliable connection. Get a free key from <a href="https://www.metered.ca/tools/openrelay" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Metered Open Relay</a>.
+                    </p>
+                  </>
+                ) : (
+                  <div className="flex items-center gap-2 px-4 py-3 bg-green-50 border border-green-200 rounded-lg">
+                    <span className="text-green-600 text-sm">✓ API key configured</span>
+                  </div>
+                )}
               </div>
 
-              {/* ✨ NEW: Transcript toggle */}
-              <div className="mb-6">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={transcriptEnabled}
-                    onChange={(e) => setTranscriptEnabled(e.target.checked)}
-                    className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
-                  />
-                  <span className="text-sm font-medium text-gray-700">
-                    Enable real-time speech transcription (AssemblyAI)
-                  </span>
-                </label>
-                <p className="mt-1 ml-6 text-xs text-gray-500">
-                  Analyzes patient speech for emotion detection and distress keywords
-                </p>
-              </div>
+              <div className="mt-4 pt-4 border-t border-gray-200 grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                      📹 Camera
+                    </label>
+                    <select
+                      value={selectedDevices.videoDeviceId}
+                      onChange={(e) => changeVideoDevice(e.target.value)}
+                      className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      {availableDevices.videoInputs.map(device => (
+                        <option key={device.deviceId} value={device.deviceId}>
+                          {device.label || `Camera ${availableDevices.videoInputs.indexOf(device) + 1}`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                      🎤 Microphone
+                    </label>
+                    <select
+                      value={selectedDevices.audioDeviceId}
+                      onChange={(e) => changeAudioDevice(e.target.value)}
+                      className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      {availableDevices.audioInputs.map(device => (
+                        <option key={device.deviceId} value={device.deviceId}>
+                          {device.label || `Microphone ${availableDevices.audioInputs.indexOf(device) + 1}`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                      🔊 Speaker
+                    </label>
+                    <select
+                      value={selectedDevices.audioOutputDeviceId}
+                      onChange={(e) => changeAudioOutput(e.target.value)}
+                      className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      {availableDevices.audioOutputs.map(device => (
+                        <option key={device.deviceId} value={device.deviceId}>
+                          {device.label || `Speaker ${availableDevices.audioOutputs.indexOf(device) + 1}`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
 
               <button
                 onClick={startCall}
@@ -1386,14 +1707,7 @@ const EmotionVideoCallWithWebRTC = () => {
                   <p className="font-mono text-lg font-semibold text-gray-800">{currentRoomId}</p>
                 </div>
 
-                {/* ✨ NEW: AssemblyAI Status */}
-                <div className="flex items-center gap-2 text-sm">
-                  <Activity className={`w-4 h-4 ${getAssemblyAIStatusColor(assemblyAIStatus)}`} />
-                  <span className={getAssemblyAIStatusColor(assemblyAIStatus)}>
-                    Transcript: {assemblyAIStatus}
-                  </span>
-                </div>
-
+                {/* ✨ NEW: ICE Statistics Display */}
                 <div className="text-xs space-y-1">
                   <div className="flex gap-4">
                     <span>📤 Local ICE: {iceStats.localCandidates}</span>
@@ -1432,6 +1746,11 @@ const EmotionVideoCallWithWebRTC = () => {
                       ICE: {connectionStatus.ice}
                     </span>
                   </div>
+                </div>
+
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-gray-600">Role:</span>
+                  <span className="font-semibold capitalize">{userProfile?.role || 'user'}</span>
                 </div>
 
                 <button
@@ -1520,8 +1839,8 @@ const EmotionVideoCallWithWebRTC = () => {
               <div className="lg:col-span-2 space-y-4">
                 <div className="bg-white rounded-xl shadow-lg overflow-hidden">
                   <div className="bg-gradient-to-r from-purple-600 to-pink-600 text-white px-4 py-2 flex items-center justify-between">
-                    <span className="font-semibold">Patient</span>
-                    {isConnected && analyzing && (
+                    <span className="font-semibold">{canViewEmotions() ? 'User' : 'Remote Participant'}</span>
+                    {isConnected && analyzing && canViewEmotions() && (
                       <div className={`flex items-center gap-1 px-3 py-1 rounded-full ${getEmotionColor(remoteEmotions.primary)}`}>
                         {getEmotionIcon(remoteEmotions.primary)}
                         <span className="text-sm font-medium capitalize">{remoteEmotions.primary}</span>
@@ -1547,51 +1866,22 @@ const EmotionVideoCallWithWebRTC = () => {
                         </div>
                       </div>
                     )}
+                    {currentSpeechEmotion && isConnected && (
+                      <SpeechEmotionIndicator
+                        currentEmotion={currentSpeechEmotion.emotion}
+                        confidence={currentSpeechEmotion.confidence}
+                        transcript={currentSpeechEmotion.transcript}
+                        isDemo={demoMode}
+                      />
+                    )}
                   </div>
                 </div>
 
-                {/* ✨ NEW: Live Transcript Display */}
-                {transcriptEnabled && isConnected && (
-                  <div className="bg-white rounded-xl shadow-lg p-4">
-                    <div className="flex items-center justify-between mb-3">
-                      <h3 className="font-bold text-lg flex items-center gap-2">
-                        <MessageSquare className="w-5 h-5 text-blue-600" />
-                        Live Transcript
-                      </h3>
-                      <span className={`text-xs px-2 py-1 rounded-full ${getAssemblyAIStatusColor(assemblyAIStatus)}`}>
-                        {assemblyAIStatus}
-                      </span>
-                    </div>
-                    
-                    {liveTranscript ? (
-                      <div className="bg-gray-50 p-3 rounded-lg border border-gray-200">
-                        <p className="text-sm text-gray-800 italic">"{liveTranscript}"</p>
-                        <p className="text-xs text-gray-500 mt-2">Just now</p>
-                      </div>
-                    ) : (
-                      <p className="text-gray-500 text-sm text-center py-4">
-                        Waiting for speech...
-                      </p>
-                    )}
-
-                    {transcriptHistory.length > 0 && (
-                      <div className="mt-4">
-                        <p className="text-xs text-gray-600 mb-2">Recent transcripts:</p>
-                        <div className="space-y-2 max-h-32 overflow-y-auto">
-                          {transcriptHistory.slice(-5).reverse().map((item) => (
-                            <div key={item.id} className="text-xs text-gray-600 p-2 bg-gray-50 rounded">
-                              {item.text}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
                 <div className="bg-white rounded-xl shadow-lg overflow-hidden">
                   <div className="bg-gradient-to-r from-blue-600 to-cyan-600 text-white px-4 py-2">
-                    <span className="font-semibold">You (Caregiver)</span>
+                    <span className="font-semibold">
+                      You ({userProfile?.role === 'superadmin' ? 'Admin' : userProfile?.role === 'caregiver' ? 'Caregiver' : 'User'})
+                    </span>
                   </div>
                   <div className="relative bg-gray-900 aspect-video">
                     <video
@@ -1601,6 +1891,7 @@ const EmotionVideoCallWithWebRTC = () => {
                       muted
                       className="w-full h-full object-cover"
                       style={{ backgroundColor: '#000', transform: 'scaleX(-1)' }}
+                      data-testid="local-video"
                     />
                   </div>
                 </div>
@@ -1636,54 +1927,126 @@ const EmotionVideoCallWithWebRTC = () => {
                       <PhoneOff className="w-6 h-6" />
                       End Call
                     </button>
+
+                    <button
+                      onClick={toggleDemoMode}
+                      className={`flex items-center gap-2 px-6 py-4 rounded-full font-semibold transition-colors shadow-lg ${
+                        demoMode
+                          ? 'bg-yellow-500 hover:bg-yellow-600 text-white'
+                          : 'bg-green-500 hover:bg-green-600 text-white'
+                      }`}
+                    >
+                      {demoMode ? '🎭 Demo Mode' : '🎤 Real Mode'}
+                    </button>
                   </div>
                 </div>
               </div>
 
               <div className="space-y-4">
-                <div className="bg-white rounded-xl shadow-lg p-6">
-                  <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
-                    <AlertCircle className="w-5 h-5 text-orange-600" />
-                    Debug Info
-                  </h3>
-                  <div className="space-y-2 text-xs font-mono">
-                    <div>Socket: <span className={getConnectionStatusColor(connectionStatus.socket)}>{connectionStatus.socket}</span></div>
-                    <div>Peer: <span className={getConnectionStatusColor(connectionStatus.peer)}>{connectionStatus.peer}</span></div>
-                    <div>ICE: <span className={getConnectionStatusColor(connectionStatus.ice)}>{connectionStatus.ice}</span></div>
-                    <div>Local ICE: {iceStats.localCandidates}</div>
-                    <div>Remote ICE: {iceStats.remoteCandidates}</div>
-                    <div>AssemblyAI: <span className={getAssemblyAIStatusColor(assemblyAIStatus)}>{assemblyAIStatus}</span></div>
-                    {iceStats.selectedPair && (
-                      <div className="text-green-600 font-semibold">
-                        Selected: {iceStats.selectedPair}
-                      </div>
-                    )}
-                  </div>
-                  <div className="mt-4 text-xs text-gray-500">
-                    <p>💡 Check browser console (F12) for detailed logs</p>
-                    <p>💡 Look for "relay" in logs to confirm TURN usage</p>
-                  </div>
-                </div>
-
-                <div className="bg-white rounded-xl shadow-lg p-6">
-                  <h3 className="font-bold text-lg mb-4">Alerts</h3>
-                  {alerts.length === 0 ? (
-                    <p className="text-gray-500 text-sm text-center py-4">No alerts</p>
-                  ) : (
-                    <div className="space-y-2 max-h-48 overflow-y-auto">
-                      {alerts.slice(-5).reverse().map((alert) => (
-                        <div key={alert.id} className="p-2 bg-yellow-50 border-l-4 border-yellow-500 rounded text-sm">
-                          {alert.message}
+                {canViewEmotions() && (
+                  <>
+                    <EnhancedStatisticsPanel
+                      statistics={callStatistics}
+                      speechEmotionStats={speechEmotionStats}
+                      isAnalyzingSpeech={isAnalyzingSpeech}
+                      demoMode={demoMode}
+                    />
+                    <div className="bg-white rounded-xl shadow-lg p-6">
+                      <h3 className="font-bold text-lg mb-4">Alerts</h3>
+                      {alerts.length === 0 ? (
+                        <p className="text-gray-500 text-sm text-center py-4">No alerts</p>
+                      ) : (
+                        <div className="space-y-2 max-h-48 overflow-y-auto">
+                          {alerts.slice(-5).reverse().map((alert) => (
+                            <div key={alert.id} className="p-2 bg-yellow-50 border-l-4 border-yellow-500 rounded text-sm">
+                              {alert.message}
+                            </div>
+                          ))}
                         </div>
-                      ))}
+                      )}
                     </div>
-                  )}
-                </div>
+                  </>
+                )}
               </div>
             </div>
           </>
         )}
       </div>
+
+      {/* Role Management Modal */}
+      {showRoleManagement && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="max-w-4xl w-full">
+            <UserRoleManagement
+              currentUserRole={userProfile?.role}
+              onClose={() => setShowRoleManagement(false)}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Post-call dashboard */}
+{showPostCallDashboard && conversationData && (
+  <PostCallDashboard
+    conversationData={conversationData}
+    userProfile={userProfile}
+    patientUserId={conversationData.patientUserId || remotePeerIdRef.current || currentRoomId || 'anonymous'}
+    onClose={() => {
+      setShowPostCallDashboard(false);
+      // Now safe to clear remote peer ID
+      remotePeerIdRef.current = null;
+    }}
+    onAssignCaregiver={() => {
+      alert('Caregiver assignment feature - integrate with your user management system');
+    }}
+  />
+)}
+
+{/* Call history viewer */}
+{showCallHistory && (
+  <CallHistoryViewer
+    patientUserId={remotePeerIdRef.current}
+    onClose={() => setShowCallHistory(false)}
+  />
+)}
+
+{/* View history button */}
+{callActive && isConnected && isAdmin() && (
+  <button
+    onClick={() => setShowCallHistory(true)}
+    className="fixed bottom-4 right-4 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg shadow-lg"
+  >
+    <Calendar className="w-4 h-4 inline mr-2" />
+    View History
+  </button>
+)}
+
+  {/* Real-time insights */}
+  {realtimeInsights.length > 0 && (
+    <div className="fixed top-20 right-4 w-80 max-h-96 overflow-y-auto space-y-2">
+      {realtimeInsights.slice(-5).map((insight, idx) => (
+        <div
+          key={idx}
+          className={`p-3 rounded-lg shadow-lg ${
+            insight.distress
+              ? 'bg-red-50 border-l-4 border-red-500'
+              : insight.sentiment === 'positive'
+              ? 'bg-green-50 border-l-4 border-green-500'
+              : insight.sentiment === 'negative'
+              ? 'bg-orange-50 border-l-4 border-orange-500'
+              : 'bg-gray-50 border-l-4 border-gray-500'
+          }`}
+        >
+          <div className="text-xs font-semibold mb-1 capitalize">
+            {insight.sentiment}
+            {insight.distress && ' ⚠️ Distress'}
+          </div>
+          <div className="text-sm text-gray-700">{insight.text}</div>
+        </div>
+      ))}
+    </div>
+  )}
+      
     </div>
   );
 };
