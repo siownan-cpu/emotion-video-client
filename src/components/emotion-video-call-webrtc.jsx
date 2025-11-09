@@ -610,7 +610,8 @@ const EmotionVideoCallWithWebRTC = () => {
           console.log('   Stream ID:', remoteStreamReceived.id);
           console.log('   Audio tracks:', remoteStreamReceived.getAudioTracks().length);
           
-          assemblyAIRef.current.startRealtimeTranscription(remoteStreamReceived)
+          const serverUrl = getEnvVar('VITE_SERVER_URL') || 'http://localhost:3001';
+          assemblyAIRef.current.startRealtimeTranscription(remoteStreamReceived, serverUrl)
             .then(() => {
               setAssemblyConnected(true);
               console.log('✅✅✅ AssemblyAI transcription started successfully!');
@@ -1360,22 +1361,12 @@ const EmotionVideoCallWithWebRTC = () => {
 
   // Initialize AssemblyAI
 const initializeAssemblyAI = async () => {
-  const apiKey = getEnvVar('VITE_ASSEMBLYAI_API_KEY');
-
-  console.log('🔑 AssemblyAI API Key Check:');
-  console.log('   Key exists:', !!apiKey);
-  console.log('   Key length:', apiKey?.length || 0);
-  console.log('   Key preview:', apiKey ? `${apiKey.substring(0, 10)}...${apiKey.substring(apiKey.length - 5)}` : 'undefined');
-
-  if (!apiKey || apiKey === 'undefined' || apiKey === 'null') {
-    console.error('❌ AssemblyAI API key not configured or invalid');
-    console.error('   Please set VITE_ASSEMBLYAI_API_KEY in your Vercel environment variables');
-    addAlert('AssemblyAI not configured - transcription disabled', 'warning');
-    return null;
+  // ✅ NO API KEY NEEDED - backend provides tokens
+  console.log('🔑 AssemblyAI v3 Initialization');
   }
 
   try {
-    const service = new AssemblyAIService(apiKey);
+    const service = new AssemblyAIService();  // ✅ NEW (no API key)
     
     // Set up callbacks
     service.onMessage((message) => {
