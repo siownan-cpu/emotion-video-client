@@ -1003,12 +1003,17 @@ const EmotionVideoCallWithWebRTC = () => {
       }));
 
       // ✨ Initialize AssemblyAI
-      const service = await initializeAssemblyAI();
-      
-      // ✅ FIX: Store in ref immediately for synchronous access
-      if (service) {
-        assemblyAIRef.current = service;
-        console.log('✅ AssemblyAI service stored in ref for immediate use');
+      try {
+        const service = await initializeAssemblyAI();
+
+        // ✅ FIX: Store in ref immediately for synchronous access
+        if (service) {
+          assemblyAIRef.current = service;
+          console.log('✅ AssemblyAI service stored in ref for immediate use');
+        }
+      } catch (error) {
+        console.error('💥 AssemblyAI initialization failed in startCall:', error);
+        addAlert(error.message, 'alert');
       }
       
       // 🔍 CRITICAL DEBUG: Check what was returned
@@ -1362,17 +1367,16 @@ const EmotionVideoCallWithWebRTC = () => {
 const initializeAssemblyAI = async () => {
   const apiKey = getEnvVar('VITE_ASSEMBLYAI_API_KEY');
 
-  console.log('🔑 AssemblyAI API Key Check:');
-  console.log('   Key exists:', !!apiKey);
-  console.log('   Key length:', apiKey?.length || 0);
-  console.log('   Key preview:', apiKey ? `${apiKey.substring(0, 10)}...${apiKey.substring(apiKey.length - 5)}` : 'undefined');
-
-  if (!apiKey || apiKey === 'undefined' || apiKey === 'null') {
-    console.error('❌ AssemblyAI API key not configured or invalid');
-    console.error('   Please set VITE_ASSEMBLYAI_API_KEY in your Vercel environment variables');
-    addAlert('AssemblyAI not configured - transcription disabled', 'warning');
+  // ✨ IMPROVED: Centralized API key check with user-facing alerts
+  if (!apiKey || apiKey === 'undefined' || apiKey === 'null' || apiKey.length < 10) {
+    console.error('❌ AssemblyAI API key is missing, invalid, or too short.');
+    addAlert('AssemblyAI API Key is not configured. Transcription and sentiment analysis are disabled.', 'alert');
     return null;
   }
+
+  console.log('🔑 AssemblyAI API Key seems configured.');
+  console.log('   Key length:', apiKey.length);
+  console.log('   Key preview:', `${apiKey.substring(0, 5)}...${apiKey.substring(apiKey.length - 5)}`);
 
   try {
     const service = new AssemblyAIService(apiKey);
@@ -1401,11 +1405,11 @@ const initializeAssemblyAI = async () => {
     });
 
     setAssemblyAI(service);
-    console.log('✅ AssemblyAI initialized successfully');
+    console.log('✅ AssemblyAI service instance created');
     return service;
   } catch (error) {
     console.error('❌ AssemblyAI initialization failed:', error);
-    addAlert('Failed to initialize AssemblyAI', 'alert');
+    addAlert(`AssemblyAI Error: ${error.message}`, 'alert');
     return null;
   }
 };
