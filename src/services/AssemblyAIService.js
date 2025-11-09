@@ -46,10 +46,14 @@ class AssemblyAIService {
       }
 
       // AssemblyAI real-time endpoint
-      const wsUrl = `wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000&token=${this.apiKey}`;
+      // CRITICAL: Ensure API key is properly trimmed and encoded
+      const cleanApiKey = this.apiKey.trim();
+      const wsUrl = `wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000&token=${encodeURIComponent(cleanApiKey)}`;
       
       console.log('🔌 Attempting to connect to AssemblyAI WebSocket...');
       console.log('   URL:', wsUrl.substring(0, 50) + '...');
+      console.log('   API Key (trimmed):', cleanApiKey.substring(0, 10) + '...' + cleanApiKey.substring(cleanApiKey.length - 5));
+      console.log('   API Key length:', cleanApiKey.length);
       
       try {
         this.websocket = new WebSocket(wsUrl);
