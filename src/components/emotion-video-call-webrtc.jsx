@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Camera, Mic, MicOff, Video, VideoOff, Phone, PhoneOff, AlertCircle, Heart, Frown, Smile, Meh, Copy, Check, TrendingUp, Clock, BarChart3, Wifi, WifiOff, Settings, MessageSquare, Activity } from 'lucide-react';
 import io from 'socket.io-client';
-import { AssemblyAIService, getAssemblyAIToken, EmotionAnalyzer } from '../services/assemblyai-service';
+import { AssemblyAIService, getAssemblyAIToken, EmotionAnalyzer } from '../services/AssemblyAIService';
 
 const EmotionVideoCallWithWebRTC = () => {
   const [callActive, setCallActive] = useState(false);
