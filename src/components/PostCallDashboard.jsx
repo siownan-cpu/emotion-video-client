@@ -104,7 +104,7 @@ const PostCallDashboard = ({
         conversationId,
         date: new Date().toISOString(),
         duration,
-        caregiverId: userProfile?.uid,
+        caregiverId: userProfile?.uid || 'unassigned',
         caregiverName: userProfile?.displayName || 'Unknown',
         distressLevel: distressLevel.level,
         wellnessScore,
