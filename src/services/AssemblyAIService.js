@@ -1,13 +1,10 @@
 /**
- * AssemblyAI Universal-Streaming (v3) Service
+ * AssemblyAI Universal-Streaming (v3) Service - FIXED
  * 
- * ✅ Features:
- * - Uses v3 streaming API (latest)
- * - Token-based authentication via backend
- * - ~300ms latency
- * - Immutable transcripts
- * - Sentiment analysis
- * - Distress detection
+ * ✅ Fixes:
+ * - Proper v3 API message handling
+ * - Displays transcripts correctly
+ * - No message_type needed (v3 uses different format)
  * 
  * 🔒 Security:
  * - NO API key in frontend
@@ -26,12 +23,14 @@ class AssemblyAIService {
     this.sentiments = [];
     this.onMessageCallback = null;
     this.onSentimentCallback = null;
+    this.onTranscriptCallback = null; // ✅ NEW: Separate callback for real-time transcripts
     this.connectionTimeout = null;
     this.reconnectAttempts = 0;
     this.maxReconnectAttempts = 3;
     this.token = null;
     this.audioBuffer = [];
     this.isProcessing = false;
+    this.currentTranscript = ''; // ✅ NEW: Track current transcript
   }
 
   /**
@@ -98,27 +97,21 @@ class AssemblyAIService {
         
         console.log('🔌 Connecting to AssemblyAI v3 Universal-Streaming...');
         console.log('   URL:', wsUrl.substring(0, 60) + '...');
-        
+
         this.websocket = new WebSocket(wsUrl);
 
-        // Set connection timeout
-        this.connectionTimeout = setTimeout(() => {
-          if (this.websocket?.readyState !== WebSocket.OPEN) {
-            console.error('❌ WebSocket connection timeout (10s)');
-            this.websocket?.close();
-            reject(new Error('Connection timeout'));
-          }
-        }, 10000);
-
-        this.websocket.onopen = () => {
-          clearTimeout(this.connectionTimeout);
+        this.websocket.onopen = async () => {
           console.log('✅ AssemblyAI v3 WebSocket connected');
           console.log('   ReadyState:', this.websocket.readyState);
           this.isConnected = true;
           this.reconnectAttempts = 0;
-          
-          // Start sending audio
-          this.startAudioProcessing(stream);
+
+          if (this.connectionTimeout) {
+            clearTimeout(this.connectionTimeout);
+          }
+
+          // Start audio processing
+          await this.startAudioProcessing(stream);
           resolve();
         };
 
@@ -132,21 +125,15 @@ class AssemblyAIService {
         };
 
         this.websocket.onerror = (error) => {
-          clearTimeout(this.connectionTimeout);
-          console.error('❌ AssemblyAI WebSocket error:', error);
-          this.isConnected = false;
+          console.error('❌ WebSocket error:', error);
           reject(error);
         };
 
         this.websocket.onclose = (event) => {
-          clearTimeout(this.connectionTimeout);
-          console.log('🔌 AssemblyAI WebSocket closed');
-          console.log('   Code:', event.code);
-          console.log('   Reason:', event.reason || 'No reason provided');
-          
+          console.log('🔌 WebSocket closed:', event.code, event.reason);
           this.isConnected = false;
-          
-          // Attempt reconnect on unexpected closure
+          this.isProcessing = false;
+
           if (!event.wasClean && this.reconnectAttempts < this.maxReconnectAttempts) {
             this.reconnectAttempts++;
             console.log(`🔄 Attempting reconnection (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
@@ -161,6 +148,15 @@ class AssemblyAIService {
           }
         };
 
+        // Set connection timeout
+        this.connectionTimeout = setTimeout(() => {
+          if (!this.isConnected) {
+            console.error('❌ Connection timeout');
+            this.websocket?.close();
+            reject(new Error('Connection timeout'));
+          }
+        }, 10000);
+
       } catch (error) {
         console.error('❌ Error starting transcription:', error);
         reject(error);
@@ -169,7 +165,7 @@ class AssemblyAIService {
   }
 
   /**
-   * Process audio stream and send to AssemblyAI using AudioWorklet (modern approach)
+   * Process audio stream and send to AssemblyAI using AudioWorklet
    */
   async startAudioProcessing(stream) {
     if (!stream) {
@@ -196,13 +192,8 @@ class AssemblyAIService {
 
       this.sourceNode = this.audioContext.createMediaStreamSource(stream);
 
-      // Try to use AudioWorkletNode (modern), fallback to ScriptProcessor if not supported
-      if (this.audioContext.audioWorklet) {
-        await this.setupAudioWorklet();
-      } else {
-        console.warn('⚠️ AudioWorklet not supported, using ScriptProcessor fallback');
-        this.setupScriptProcessor();
-      }
+      // Use AudioWorklet (modern)
+      await this.setupAudioWorklet();
 
       console.log('✅ Audio processing started');
     } catch (error) {
@@ -212,7 +203,7 @@ class AssemblyAIService {
   }
 
   /**
-   * Setup AudioWorklet processing (modern, runs in separate thread)
+   * Setup AudioWorklet processing (modern, no deprecation warnings)
    */
   async setupAudioWorklet() {
     try {
@@ -274,9 +265,9 @@ class AssemblyAIService {
             this.websocket.send(pcm16.buffer);
             audioPacketsCount++;
 
-            // Log every 5 seconds
+            // Log every 10 seconds
             const now = Date.now();
-            if (now - lastLogTime > 5000) {
+            if (now - lastLogTime > 10000) {
               console.log(`📡 Sent ${audioPacketsCount} audio packets to AssemblyAI`);
               lastLogTime = now;
             }
@@ -288,7 +279,7 @@ class AssemblyAIService {
 
       // Connect the audio graph
       this.sourceNode.connect(workletNode);
-      workletNode.connect(this.audioContext.destination);
+      // DON'T connect to destination - we don't want to hear it
       
       this.processor = workletNode;
       this.isProcessing = true;
@@ -299,129 +290,85 @@ class AssemblyAIService {
       URL.revokeObjectURL(processorUrl);
 
     } catch (error) {
-      console.error('❌ AudioWorklet setup failed:', error);
-      console.warn('⚠️ Falling back to ScriptProcessor');
-      this.setupScriptProcessor();
+      console.error('❌ Error setting up AudioWorklet:', error);
+      throw error;
     }
   }
 
   /**
-   * Setup ScriptProcessor (fallback for older browsers)
-   */
-  setupScriptProcessor() {
-    const BUFFER_SIZE = 8000; // ~500ms at 16kHz
-    this.audioBuffer = [];
-    this.isProcessing = true;
-
-    this.processor = this.audioContext.createScriptProcessor(4096, 1, 1);
-
-    let audioPacketsCount = 0;
-    let lastLogTime = Date.now();
-
-    this.processor.onaudioprocess = (e) => {
-      if (!this.isProcessing || !this.isConnected || this.websocket?.readyState !== WebSocket.OPEN) {
-        return;
-      }
-
-      const audioData = e.inputBuffer.getChannelData(0);
-      
-      // Convert Float32 to Int16 PCM
-      const pcm16 = new Int16Array(audioData.length);
-      for (let i = 0; i < audioData.length; i++) {
-        const s = Math.max(-1, Math.min(1, audioData[i]));
-        pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-      }
-
-      // Add to buffer
-      this.audioBuffer.push(...pcm16);
-
-      // Send when buffer reaches target size
-      if (this.audioBuffer.length >= BUFFER_SIZE) {
-        const chunk = new Int16Array(this.audioBuffer.splice(0, BUFFER_SIZE));
-        this.sendAudioChunk(chunk);
-        audioPacketsCount++;
-
-        // Log every 5 seconds
-        const now = Date.now();
-        if (now - lastLogTime > 5000) {
-          console.log(`📡 Sent ${audioPacketsCount} audio packets to AssemblyAI`);
-          lastLogTime = now;
-        }
-      }
-    };
-
-    // Connect audio graph
-    this.sourceNode.connect(this.processor);
-    this.processor.connect(this.audioContext.destination);
-
-    console.log('✅ ScriptProcessor initialized (fallback mode)');
-  }
-
-  /**
-   * Send audio chunk to AssemblyAI v3 (binary format)
-   */
-  sendAudioChunk(pcm16Data) {
-    if (!this.websocket || this.websocket.readyState !== WebSocket.OPEN) {
-      return;
-    }
-
-    try {
-      // AssemblyAI v3 expects raw binary PCM16 data, not JSON
-      // Send the ArrayBuffer directly
-      this.websocket.send(pcm16Data.buffer);
-    } catch (error) {
-      console.error('❌ Error sending audio packet:', error);
-    }
-  }
-
-  /**
-   * Handle incoming WebSocket messages
+   * ✅ FIXED: Handle v3 API messages
+   * v3 API uses different format than v2:
+   * - No 'message_type' field
+   * - Uses 'type' field with values like 'Begin', 'Transcript', etc.
+   * - Transcript messages have: turn_order, transcript, end_of_turn, words[], etc.
    */
   handleMessage(data) {
-    // Log unknown message types for debugging
-    if (!data.message_type) {
-      console.log('ℹ️ AssemblyAI message (no type):', JSON.stringify(data).substring(0, 200));
+    // ✅ Handle v3 'Begin' message (session starts)
+    if (data.type === 'Begin') {
+      console.log('🎤 AssemblyAI v3 session started');
+      console.log('   Session ID:', data.id);
+      console.log('   Expires at:', new Date(data.expires_at * 1000).toISOString());
       return;
     }
 
-    if (data.message_type === 'PartialTranscript') {
-      // Real-time partial results
-      console.log('📝 Partial:', data.text);
-      
-    } else if (data.message_type === 'FinalTranscript') {
-      // Final immutable transcript
-      console.log('✅ Final:', data.text);
+    // ✅ Handle v3 transcript messages (no 'type' field)
+    // v3 sends continuous transcript updates without explicit type
+    if (data.hasOwnProperty('transcript')) {
+      const transcript = data.transcript;
+      const isEndOfTurn = data.end_of_turn === true;
+      const confidence = data.end_of_turn_confidence || 0;
 
-      const message = {
-        text: data.text,
-        confidence: data.confidence || 0,
-        timestamp: Date.now(),
-        isFinal: true
-      };
-
-      this.messages.push(message);
-
-      if (this.onMessageCallback) {
-        this.onMessageCallback(message);
+      // Log for debugging
+      if (transcript && transcript.length > 0) {
+        console.log('📝 Transcript:', transcript, '| End:', isEndOfTurn, '| Conf:', Math.round(confidence * 100) + '%');
       }
 
-      // Analyze sentiment
-      this.analyzeSentiment(data.text);
-      
-    } else if (data.message_type === 'SessionBegins') {
-      console.log('🎤 AssemblyAI session started');
-      console.log('   Session ID:', data.session_id);
-      console.log('   Expires at:', data.expires_at);
-      
-    } else if (data.message_type === 'SessionTerminated') {
-      console.log('🔚 AssemblyAI session terminated');
-      
-    } else if (data.message_type === 'Error') {
-      console.error('❌ AssemblyAI error:', data.error);
-      
-    } else {
-      console.log('ℹ️ AssemblyAI message:', data.message_type, JSON.stringify(data).substring(0, 100));
+      // Update current transcript
+      this.currentTranscript = transcript;
+
+      // ✅ Call transcript callback for real-time display
+      if (this.onTranscriptCallback) {
+        this.onTranscriptCallback({
+          text: transcript,
+          isFinal: isEndOfTurn,
+          confidence: confidence,
+          timestamp: Date.now()
+        });
+      }
+
+      // If end of turn, save as final message
+      if (isEndOfTurn && transcript && transcript.trim().length > 0) {
+        console.log('✅ Final transcript:', transcript);
+
+        const message = {
+          text: transcript,
+          confidence: confidence,
+          timestamp: Date.now(),
+          isFinal: true,
+          words: data.words || []
+        };
+
+        this.messages.push(message);
+
+        if (this.onMessageCallback) {
+          this.onMessageCallback(message);
+        }
+
+        // Analyze sentiment
+        this.analyzeSentiment(transcript);
+      }
+
+      return;
     }
+
+    // Handle error messages
+    if (data.error) {
+      console.error('❌ AssemblyAI error:', data.error);
+      return;
+    }
+
+    // Log unknown message format
+    console.log('ℹ️ AssemblyAI message:', JSON.stringify(data).substring(0, 200));
   }
 
   /**
@@ -450,230 +397,138 @@ class AssemblyAIService {
     });
 
     distressKeywords.forEach(word => {
-      if (lowerText.includes(word)) {
-        distressCount++;
-        console.warn(`⚠️ Distress keyword detected: "${word}"`);
-      }
+      if (lowerText.includes(word)) distressCount++;
     });
 
-    // Calculate sentiment score (-1 to 1)
-    const totalWords = positiveCount + negativeCount + 1;
-    const score = (positiveCount - negativeCount) / totalWords;
-    const polarity = score > 0.2 ? 'positive' : score < -0.2 ? 'negative' : 'neutral';
+    let sentiment = 'neutral';
+    let score = 0;
 
-    const sentiment = {
+    if (positiveCount > negativeCount) {
+      sentiment = 'positive';
+      score = positiveCount - negativeCount;
+    } else if (negativeCount > positiveCount) {
+      sentiment = 'negative';
+      score = negativeCount - positiveCount;
+    }
+
+    const sentimentData = {
+      sentiment,
+      score,
       text,
-      polarity: {
-        score: Number.isNaN(score) ? 0 : score,
-      },
-      suggested: polarity,
-      distress: distressCount > 0,
-      distressKeywords: distressCount,
       timestamp: Date.now(),
+      hasDistress: distressCount > 0,
+      distressLevel: distressCount
     };
 
-    this.sentiments.push(sentiment);
+    this.sentiments.push(sentimentData);
 
     if (this.onSentimentCallback) {
-      this.onSentimentCallback(sentiment);
+      this.onSentimentCallback(sentimentData);
     }
 
-    // Log significant sentiment
-    if (distressCount > 0 || Math.abs(score) > 0.5) {
-      console.log('😊 Sentiment:', {
-        polarity: polarity.toUpperCase(),
-        score: score.toFixed(2),
-        distress: distressCount > 0,
-        text: text.substring(0, 50) + '...'
-      });
+    if (distressCount > 0) {
+      console.warn('⚠️ Distress detected:', text);
+      console.warn('   Distress keywords found:', distressCount);
     }
-
-    return sentiment;
   }
 
   /**
-   * Stop transcription and cleanup
+   * Stop transcription and clean up
    */
-  stopRealtimeTranscription() {
+  stop() {
     console.log('🛑 Stopping AssemblyAI transcription...');
 
     this.isProcessing = false;
 
-    if (this.connectionTimeout) {
-      clearTimeout(this.connectionTimeout);
-    }
-
-    // Flush remaining audio buffer
-    if (this.audioBuffer.length > 0 && this.websocket?.readyState === WebSocket.OPEN) {
-      const chunk = new Int16Array(this.audioBuffer);
-      this.sendAudioChunk(chunk);
-      this.audioBuffer = [];
-    }
-
-    // Close WebSocket
-    if (this.websocket && this.isConnected) {
-      try {
-        // AssemblyAI v3 doesn't need terminate_session message
-        // Just close the WebSocket gracefully
-        setTimeout(() => {
-          if (this.websocket) {
-            this.websocket.close(1000, 'Normal closure');
-            console.log('🔌 WebSocket closed');
-          }
-        }, 500);
-      } catch (error) {
-        console.error('❌ Error closing WebSocket:', error);
-      }
-    }
-
-    // Clean up audio processing
     if (this.processor) {
-      try {
-        // Handle both AudioWorkletNode and ScriptProcessorNode
-        if (this.processor.port) {
-          // AudioWorklet cleanup
-          this.processor.port.close();
-          console.log('✅ AudioWorklet port closed');
-        }
-        
-        this.processor.disconnect();
-        this.processor = null;
-        console.log('✅ Audio processor disconnected');
-      } catch (error) {
-        console.error('❌ Error disconnecting processor:', error);
-      }
+      this.processor.disconnect();
+      this.processor = null;
     }
 
     if (this.sourceNode) {
-      try {
-        this.sourceNode.disconnect();
-        this.sourceNode = null;
-      } catch (error) {
-        console.error('❌ Error disconnecting source:', error);
-      }
+      this.sourceNode.disconnect();
+      this.sourceNode = null;
     }
 
     if (this.audioContext) {
-      try {
-        this.audioContext.close();
-        this.audioContext = null;
-        console.log('✅ Audio context closed');
-      } catch (error) {
-        console.error('❌ Error closing audio context:', error);
+      this.audioContext.close();
+      this.audioContext = null;
+    }
+
+    if (this.websocket) {
+      if (this.websocket.readyState === WebSocket.OPEN) {
+        this.websocket.close();
       }
+      this.websocket = null;
     }
 
     this.isConnected = false;
-    this.websocket = null;
-    this.token = null;
-    console.log('✅ AssemblyAI transcription stopped');
+    console.log('✅ AssemblyAI stopped and cleaned up');
   }
 
   /**
-   * Get conversation analytics
+   * Get all transcription messages
    */
-  getConversationAnalytics() {
-    console.log('📊 Generating conversation analytics...');
-    console.log('   Messages:', this.messages.length);
-    console.log('   Sentiments:', this.sentiments.length);
+  getMessages() {
+    return this.messages;
+  }
 
-    const sentimentDistribution = {
-      positive: 0,
-      neutral: 0,
-      negative: 0,
-    };
+  /**
+   * Get all sentiment analysis results
+   */
+  getSentiments() {
+    return this.sentiments;
+  }
 
-    this.sentiments.forEach(s => {
-      if (s.suggested === 'positive') sentimentDistribution.positive++;
-      else if (s.suggested === 'negative') sentimentDistribution.negative++;
-      else sentimentDistribution.neutral++;
-    });
-
-    const avgSentiment = this.sentiments.length > 0
-      ? this.sentiments.reduce((sum, s) => sum + s.polarity.score, 0) / this.sentiments.length
-      : 0;
-
-    const distressIndicators = this.sentiments.reduce((sum, s) => sum + (s.distressKeywords || 0), 0);
-
-    const analytics = {
-      conversationId: `assembly-${Date.now()}`,
+  /**
+   * Get conversation data for storage
+   */
+  getConversationData() {
+    return {
       messages: this.messages,
-      topics: this.extractTopics(),
-      actionItems: [],
-      questions: [],
-      analytics: {
-        messageCount: this.messages.length,
-        avgConfidence: this.messages.reduce((sum, m) => sum + (m.confidence || 0), 0) / Math.max(1, this.messages.length),
-      },
-      sentiment: {
-        averageSentiment: avgSentiment,
-        sentimentDistribution,
-        distressIndicators,
-      },
-      duration: 0,
+      sentiments: this.sentiments,
+      totalMessages: this.messages.length,
+      overallSentiment: this.calculateOverallSentiment(),
+      distressEvents: this.sentiments.filter(s => s.hasDistress).length,
+      duration: this.messages.length > 0 
+        ? this.messages[this.messages.length - 1].timestamp - this.messages[0].timestamp
+        : 0
     };
-
-    console.log('✅ Analytics generated');
-
-    return analytics;
   }
 
   /**
-   * Extract topics from messages
+   * Calculate overall sentiment
    */
-  extractTopics() {
-    const wordFrequency = {};
-    const stopWords = new Set([
-      'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 
-      'of', 'with', 'by', 'is', 'was', 'are', 'were', 'be', 'been', 'being', 
-      'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 
-      'should', 'may', 'might', 'must', 'can', 'i', 'you', 'he', 'she', 'it', 
-      'we', 'they', 'my', 'your', 'his', 'her', 'its', 'our', 'their', 'this',
-      'that', 'these', 'those', 'there', 'here', 'where', 'when', 'why', 'how'
-    ]);
+  calculateOverallSentiment() {
+    if (this.sentiments.length === 0) return 'neutral';
 
-    this.messages.forEach(msg => {
-      const words = msg.text.toLowerCase().split(/\W+/);
-      words.forEach(word => {
-        if (word.length > 3 && !stopWords.has(word)) {
-          wordFrequency[word] = (wordFrequency[word] || 0) + 1;
-        }
-      });
-    });
+    const positive = this.sentiments.filter(s => s.sentiment === 'positive').length;
+    const negative = this.sentiments.filter(s => s.sentiment === 'negative').length;
 
-    return Object.entries(wordFrequency)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 10)
-      .map(([word, count]) => ({
-        text: word,
-        score: count / this.messages.length,
-        type: 'topic',
-        count: count
-      }));
+    if (positive > negative) return 'positive';
+    if (negative > positive) return 'negative';
+    return 'neutral';
   }
 
   /**
-   * Set callbacks
+   * ✅ NEW: Set transcript callback for real-time updates
+   */
+  onTranscript(callback) {
+    this.onTranscriptCallback = callback;
+  }
+
+  /**
+   * Set message callback
    */
   onMessage(callback) {
     this.onMessageCallback = callback;
   }
 
+  /**
+   * Set sentiment callback
+   */
   onSentiment(callback) {
     this.onSentimentCallback = callback;
-  }
-
-  /**
-   * Get connection status
-   */
-  getStatus() {
-    return {
-      connected: this.isConnected,
-      websocketState: this.websocket?.readyState,
-      messagesReceived: this.messages.length,
-      sentimentsAnalyzed: this.sentiments.length,
-      reconnectAttempts: this.reconnectAttempts
-    };
   }
 }
 
