@@ -169,7 +169,7 @@ class AssemblyAIService {
   }
 
   /**
-   * Process audio stream and send to AssemblyAI
+   * Process audio stream and send to AssemblyAI using AudioWorklet (modern approach)
    */
   async startAudioProcessing(stream) {
     if (!stream) {
@@ -184,7 +184,7 @@ class AssemblyAIService {
         return;
       }
 
-      console.log('🎤 Starting audio processing...');
+      console.log('🎤 Starting audio processing with AudioWorklet...');
       console.log('   Audio tracks:', audioTracks.length);
       console.log('   Track:', audioTracks[0].label);
       console.log('   Enabled:', audioTracks[0].enabled);
@@ -195,55 +195,166 @@ class AssemblyAIService {
       });
 
       this.sourceNode = this.audioContext.createMediaStreamSource(stream);
-      this.processor = this.audioContext.createScriptProcessor(4096, 1, 1);
 
-      this.sourceNode.connect(this.processor);
-      this.processor.connect(this.audioContext.destination);
-
-      const BUFFER_SIZE = 8000; // ~500ms at 16kHz
-      this.audioBuffer = [];
-      this.isProcessing = true;
-
-      let audioPacketsCount = 0;
-      let lastLogTime = Date.now();
-
-      this.processor.onaudioprocess = (e) => {
-        if (!this.isProcessing || !this.isConnected || this.websocket?.readyState !== WebSocket.OPEN) {
-          return;
-        }
-
-        const audioData = e.inputBuffer.getChannelData(0);
-        
-        // Convert Float32 to Int16 PCM
-        const pcm16 = new Int16Array(audioData.length);
-        for (let i = 0; i < audioData.length; i++) {
-          const s = Math.max(-1, Math.min(1, audioData[i]));
-          pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-        }
-
-        // Add to buffer
-        this.audioBuffer.push(...pcm16);
-
-        // Send when buffer reaches target size
-        if (this.audioBuffer.length >= BUFFER_SIZE) {
-          const chunk = new Int16Array(this.audioBuffer.splice(0, BUFFER_SIZE));
-          this.sendAudioChunk(chunk);
-          audioPacketsCount++;
-
-          // Log every 5 seconds
-          const now = Date.now();
-          if (now - lastLogTime > 5000) {
-            console.log(`📡 Sent ${audioPacketsCount} audio packets to AssemblyAI`);
-            lastLogTime = now;
-          }
-        }
-      };
+      // Try to use AudioWorkletNode (modern), fallback to ScriptProcessor if not supported
+      if (this.audioContext.audioWorklet) {
+        await this.setupAudioWorklet();
+      } else {
+        console.warn('⚠️ AudioWorklet not supported, using ScriptProcessor fallback');
+        this.setupScriptProcessor();
+      }
 
       console.log('✅ Audio processing started');
     } catch (error) {
       console.error('❌ Error starting audio processing:', error);
       throw error;
     }
+  }
+
+  /**
+   * Setup AudioWorklet processing (modern, runs in separate thread)
+   */
+  async setupAudioWorklet() {
+    try {
+      // Create inline AudioWorklet processor
+      const processorCode = `
+        class AssemblyAIProcessor extends AudioWorkletProcessor {
+          constructor() {
+            super();
+            this.bufferSize = 8000; // ~500ms at 16kHz
+            this.buffer = [];
+          }
+
+          process(inputs, outputs, parameters) {
+            const input = inputs[0];
+            if (input.length > 0) {
+              const inputData = input[0]; // First channel
+              
+              // Convert Float32 to Int16 PCM
+              for (let i = 0; i < inputData.length; i++) {
+                const s = Math.max(-1, Math.min(1, inputData[i]));
+                const pcm16 = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                this.buffer.push(pcm16);
+              }
+
+              // Send when buffer is full
+              if (this.buffer.length >= this.bufferSize) {
+                const chunk = new Int16Array(this.buffer.splice(0, this.bufferSize));
+                this.port.postMessage({ audioData: chunk.buffer }, [chunk.buffer]);
+              }
+            }
+            
+            return true; // Keep processor alive
+          }
+        }
+
+        registerProcessor('assemblyai-processor', AssemblyAIProcessor);
+      `;
+
+      // Create blob URL for the processor
+      const blob = new Blob([processorCode], { type: 'application/javascript' });
+      const processorUrl = URL.createObjectURL(blob);
+
+      // Add the processor module
+      await this.audioContext.audioWorklet.addModule(processorUrl);
+      
+      // Create the worklet node
+      const workletNode = new AudioWorkletNode(this.audioContext, 'assemblyai-processor');
+      
+      // Handle messages from the worklet
+      let audioPacketsCount = 0;
+      let lastLogTime = Date.now();
+
+      workletNode.port.onmessage = (event) => {
+        if (this.isProcessing && this.isConnected && this.websocket?.readyState === WebSocket.OPEN) {
+          const audioData = event.data.audioData;
+          const pcm16 = new Int16Array(audioData);
+          
+          try {
+            this.websocket.send(pcm16.buffer);
+            audioPacketsCount++;
+
+            // Log every 5 seconds
+            const now = Date.now();
+            if (now - lastLogTime > 5000) {
+              console.log(`📡 Sent ${audioPacketsCount} audio packets to AssemblyAI`);
+              lastLogTime = now;
+            }
+          } catch (error) {
+            console.error('❌ Error sending audio packet:', error);
+          }
+        }
+      };
+
+      // Connect the audio graph
+      this.sourceNode.connect(workletNode);
+      workletNode.connect(this.audioContext.destination);
+      
+      this.processor = workletNode;
+      this.isProcessing = true;
+
+      console.log('✅ AudioWorklet processor initialized (no deprecation warnings!)');
+      
+      // Clean up blob URL
+      URL.revokeObjectURL(processorUrl);
+
+    } catch (error) {
+      console.error('❌ AudioWorklet setup failed:', error);
+      console.warn('⚠️ Falling back to ScriptProcessor');
+      this.setupScriptProcessor();
+    }
+  }
+
+  /**
+   * Setup ScriptProcessor (fallback for older browsers)
+   */
+  setupScriptProcessor() {
+    const BUFFER_SIZE = 8000; // ~500ms at 16kHz
+    this.audioBuffer = [];
+    this.isProcessing = true;
+
+    this.processor = this.audioContext.createScriptProcessor(4096, 1, 1);
+
+    let audioPacketsCount = 0;
+    let lastLogTime = Date.now();
+
+    this.processor.onaudioprocess = (e) => {
+      if (!this.isProcessing || !this.isConnected || this.websocket?.readyState !== WebSocket.OPEN) {
+        return;
+      }
+
+      const audioData = e.inputBuffer.getChannelData(0);
+      
+      // Convert Float32 to Int16 PCM
+      const pcm16 = new Int16Array(audioData.length);
+      for (let i = 0; i < audioData.length; i++) {
+        const s = Math.max(-1, Math.min(1, audioData[i]));
+        pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+      }
+
+      // Add to buffer
+      this.audioBuffer.push(...pcm16);
+
+      // Send when buffer reaches target size
+      if (this.audioBuffer.length >= BUFFER_SIZE) {
+        const chunk = new Int16Array(this.audioBuffer.splice(0, BUFFER_SIZE));
+        this.sendAudioChunk(chunk);
+        audioPacketsCount++;
+
+        // Log every 5 seconds
+        const now = Date.now();
+        if (now - lastLogTime > 5000) {
+          console.log(`📡 Sent ${audioPacketsCount} audio packets to AssemblyAI`);
+          lastLogTime = now;
+        }
+      }
+    };
+
+    // Connect audio graph
+    this.sourceNode.connect(this.processor);
+    this.processor.connect(this.audioContext.destination);
+
+    console.log('✅ ScriptProcessor initialized (fallback mode)');
   }
 
   /**
@@ -267,6 +378,12 @@ class AssemblyAIService {
    * Handle incoming WebSocket messages
    */
   handleMessage(data) {
+    // Log unknown message types for debugging
+    if (!data.message_type) {
+      console.log('ℹ️ AssemblyAI message (no type):', JSON.stringify(data).substring(0, 200));
+      return;
+    }
+
     if (data.message_type === 'PartialTranscript') {
       // Real-time partial results
       console.log('📝 Partial:', data.text);
@@ -294,6 +411,7 @@ class AssemblyAIService {
     } else if (data.message_type === 'SessionBegins') {
       console.log('🎤 AssemblyAI session started');
       console.log('   Session ID:', data.session_id);
+      console.log('   Expires at:', data.expires_at);
       
     } else if (data.message_type === 'SessionTerminated') {
       console.log('🔚 AssemblyAI session terminated');
@@ -302,7 +420,7 @@ class AssemblyAIService {
       console.error('❌ AssemblyAI error:', data.error);
       
     } else {
-      console.log('ℹ️ AssemblyAI message:', data.message_type);
+      console.log('ℹ️ AssemblyAI message:', data.message_type, JSON.stringify(data).substring(0, 100));
     }
   }
 
@@ -411,6 +529,13 @@ class AssemblyAIService {
     // Clean up audio processing
     if (this.processor) {
       try {
+        // Handle both AudioWorkletNode and ScriptProcessorNode
+        if (this.processor.port) {
+          // AudioWorklet cleanup
+          this.processor.port.close();
+          console.log('✅ AudioWorklet port closed');
+        }
+        
         this.processor.disconnect();
         this.processor = null;
         console.log('✅ Audio processor disconnected');
