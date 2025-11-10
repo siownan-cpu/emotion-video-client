@@ -15,10 +15,11 @@
  * - Post-call analytics
  * 
  * 📝 Required Environment Variables:
- * - VITE_ASSEMBLYAI_API_KEY (for transcription & sentiment)
+ * - VITE_SERVER_URL (signaling server + AssemblyAI token generation)
  * - VITE_METERED_API_KEY (for TURN servers)
- * - VITE_SERVER_URL (signaling server)
  * - Firebase config variables
+ * 
+ * ⚠️ NO VITE_ASSEMBLYAI_API_KEY needed - backend provides temporary tokens
  */
 
 import React, { useState, useRef, useEffect } from 'react';
@@ -161,9 +162,9 @@ const EmotionVideoCallWithWebRTC = () => {
   // ✅ DEBUG: Log environment variables on component mount
   useEffect(() => {
     console.log('🔍 Environment Variables Check:');
-    console.log('   VITE_ASSEMBLYAI_API_KEY:', getEnvVar('VITE_ASSEMBLYAI_API_KEY') ? '✅ SET' : '❌ NOT SET');
-    console.log('   VITE_METERED_API_KEY:', getEnvVar('VITE_METERED_API_KEY') ? '✅ SET' : '❌ NOT SET');
     console.log('   VITE_SERVER_URL:', getEnvVar('VITE_SERVER_URL') ? '✅ SET' : '❌ NOT SET');
+    console.log('   VITE_METERED_API_KEY:', getEnvVar('VITE_METERED_API_KEY') ? '✅ SET' : '❌ NOT SET');
+    console.log('   ⚠️ VITE_ASSEMBLYAI_API_KEY not needed - backend provides tokens');
   }, []);
 
   // Auto-start speech analysis when connected
@@ -605,15 +606,19 @@ const EmotionVideoCallWithWebRTC = () => {
         // ✅ FIX: Use assemblyAIRef.current instead of assemblyAI state
         if (assemblyAIRef.current && remoteStreamReceived && !assemblyStartedRef.current) {
           assemblyStartedRef.current = true;
-          console.log('✅ ALL CONDITIONS MET! Starting AssemblyAI...');
+          console.log('✅ ALL CONDITIONS MET! Starting AssemblyAI v3...');
           console.log('🎤 Starting AssemblyAI transcription with REMOTE PATIENT audio');
           console.log('   Stream ID:', remoteStreamReceived.id);
           console.log('   Audio tracks:', remoteStreamReceived.getAudioTracks().length);
           
-          assemblyAIRef.current.startRealtimeTranscription(remoteStreamReceived)
+          const serverUrl = getEnvVar('VITE_SERVER_URL') || 'http://localhost:3001';
+          console.log('   Backend URL:', serverUrl);
+          
+          assemblyAIRef.current.startRealtimeTranscription(remoteStreamReceived, serverUrl)
             .then(() => {
               setAssemblyConnected(true);
-              console.log('✅✅✅ AssemblyAI transcription started successfully!');
+              console.log('✅✅✅ AssemblyAI v3 transcription started successfully!');
+              console.log('   Using temporary token from backend:', serverUrl);
               console.log('   Ready to transcribe patient audio');
             })
             .catch(error => {
@@ -621,6 +626,7 @@ const EmotionVideoCallWithWebRTC = () => {
               console.error('   Error:', error);
               console.error('   Message:', error.message);
               console.error('   Stack:', error.stack);
+              console.error('   Make sure backend /api/assemblyai-token endpoint is working');
               assemblyStartedRef.current = false;
               addAlert('AssemblyAI failed to start: ' + error.message, 'alert');
             });
@@ -1358,24 +1364,23 @@ const EmotionVideoCallWithWebRTC = () => {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // Initialize AssemblyAI
+  // Initialize AssemblyAI (v3 with backend token generation)
 const initializeAssemblyAI = async () => {
-  const apiKey = getEnvVar('VITE_ASSEMBLYAI_API_KEY');
+  // ✅ NO API KEY NEEDED - backend provides temporary tokens
+  console.log('🔑 AssemblyAI v3 Initialization');
+  console.log('   Backend URL:', getEnvVar('VITE_SERVER_URL'));
 
-  console.log('🔑 AssemblyAI API Key Check:');
-  console.log('   Key exists:', !!apiKey);
-  console.log('   Key length:', apiKey?.length || 0);
-  console.log('   Key preview:', apiKey ? `${apiKey.substring(0, 10)}...${apiKey.substring(apiKey.length - 5)}` : 'undefined');
-
-  if (!apiKey || apiKey === 'undefined' || apiKey === 'null') {
-    console.error('❌ AssemblyAI API key not configured or invalid');
-    console.error('   Please set VITE_ASSEMBLYAI_API_KEY in your Vercel environment variables');
-    addAlert('AssemblyAI not configured - transcription disabled', 'warning');
+  const serverUrl = getEnvVar('VITE_SERVER_URL');
+  
+  if (!serverUrl || serverUrl === 'undefined' || serverUrl === 'null') {
+    console.error('❌ VITE_SERVER_URL not configured');
+    console.error('   Please set VITE_SERVER_URL in your environment variables');
+    addAlert('Server URL not configured - transcription disabled', 'warning');
     return null;
   }
 
   try {
-    const service = new AssemblyAIService(apiKey);
+    const service = new AssemblyAIService();  // ✅ No API key parameter
     
     // Set up callbacks
     service.onMessage((message) => {
@@ -1401,7 +1406,8 @@ const initializeAssemblyAI = async () => {
     });
 
     setAssemblyAI(service);
-    console.log('✅ AssemblyAI initialized successfully');
+    assemblyAIRef.current = service;  // ✅ Store in ref immediately
+    console.log('✅ AssemblyAI v3 initialized successfully');
     return service;
   } catch (error) {
     console.error('❌ AssemblyAI initialization failed:', error);
