@@ -42,13 +42,12 @@ class AssemblyAIService {
     try {
       console.log('🔑 Requesting temporary token from backend...');
       console.log('   Server URL:', serverUrl);
-      
-      const desiredTtl = 60; // Pick 60–600s for v3 tokens
-      const response = await fetch(`${serverUrl}/api/assemblyai-token?expires_in_seconds=${desiredTtl}`, {
+
+      const response = await fetch(`${serverUrl}/api/assemblyai-token`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
-        },
+        }
       });
 
       if (!response.ok) {
@@ -64,8 +63,9 @@ class AssemblyAIService {
       }
 
       this.token = data.token;
-      console.log('✅ Got temporary token (expires in', data.expires_in_seconds, 'seconds)');
-      console.log(' Token preview:', this.token.substring(0, 20) + '...');
+      console.log('✅ Got temporary token (expires in', data.expires_in || 3600, 'seconds)');
+      console.log('   Token preview:', this.token.substring(0, 20) + '...');
+      
       return this.token;
     } catch (error) {
       console.error('❌ Error getting token:', error);
@@ -247,7 +247,7 @@ class AssemblyAIService {
   }
 
   /**
-   * Send audio chunk to AssemblyAI
+   * Send audio chunk to AssemblyAI v3 (binary format)
    */
   sendAudioChunk(pcm16Data) {
     if (!this.websocket || this.websocket.readyState !== WebSocket.OPEN) {
@@ -255,28 +255,12 @@ class AssemblyAIService {
     }
 
     try {
-      // Convert to base64
-      const base64Audio = this.arrayBufferToBase64(pcm16Data.buffer);
-      
-      // Send to AssemblyAI
-      this.websocket.send(JSON.stringify({ 
-        audio_data: base64Audio 
-      }));
+      // AssemblyAI v3 expects raw binary PCM16 data, not JSON
+      // Send the ArrayBuffer directly
+      this.websocket.send(pcm16Data.buffer);
     } catch (error) {
       console.error('❌ Error sending audio packet:', error);
     }
-  }
-
-  /**
-   * Convert ArrayBuffer to base64
-   */
-  arrayBufferToBase64(buffer) {
-    let binary = '';
-    const bytes = new Uint8Array(buffer);
-    for (let i = 0; i < bytes.byteLength; i++) {
-      binary += String.fromCharCode(bytes[i]);
-    }
-    return btoa(binary);
   }
 
   /**
@@ -411,11 +395,8 @@ class AssemblyAIService {
     // Close WebSocket
     if (this.websocket && this.isConnected) {
       try {
-        if (this.websocket.readyState === WebSocket.OPEN) {
-          this.websocket.send(JSON.stringify({ terminate_session: true }));
-          console.log('📤 Sent termination message');
-        }
-        
+        // AssemblyAI v3 doesn't need terminate_session message
+        // Just close the WebSocket gracefully
         setTimeout(() => {
           if (this.websocket) {
             this.websocket.close(1000, 'Normal closure');
