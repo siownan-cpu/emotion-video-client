@@ -95,22 +95,83 @@ class EnhancedAIEmotionAnalyzerRemote {
       this.analyser.fftSize = 4096;
       this.analyser.smoothingTimeConstant = 0.8;
       
-      // Create script processor for real-time analysis
-      this.scriptProcessor = this.audioContext.createScriptProcessor(4096, 1, 1);
+      // ✅ FIXED: Use AudioWorklet instead of deprecated ScriptProcessor
+      if (this.audioContext.audioWorklet) {
+        await this.setupAudioWorklet(source);
+      } else {
+        // Fallback for older browsers (shouldn't happen in modern browsers)
+        console.warn('⚠️ AudioWorklet not supported, audio analysis may have limitations');
+        // Just connect source to analyser without processor
+        source.connect(this.analyser);
+      }
       
-      // Connect: RemoteStream → Analyzer → ScriptProcessor → Destination
-      source.connect(this.analyser);
-      this.analyser.connect(this.scriptProcessor);
-      this.scriptProcessor.connect(this.audioContext.destination);
-      
-      console.log('✅ Remote audio analyzer initialized');
+      console.log('✅ Remote audio analyzer initialized (AudioWorklet)');
       console.log('   Sample Rate:', this.audioContext.sampleRate);
       console.log('   FFT Size:', this.analyser.fftSize);
+      console.log('   No deprecation warnings! ✨');
       
       return true;
     } catch (error) {
       console.error('❌ Failed to initialize analyzer:', error);
       return false;
+    }
+  }
+
+  /**
+   * ✅ NEW: Setup AudioWorklet for modern audio processing
+   */
+  async setupAudioWorklet(source) {
+    try {
+      // Create inline AudioWorklet processor for emotion analysis
+      const processorCode = `
+        class EmotionAnalyzerProcessor extends AudioWorkletProcessor {
+          constructor() {
+            super();
+          }
+
+          process(inputs, outputs, parameters) {
+            // Pass through audio (we're just analyzing, not modifying)
+            const input = inputs[0];
+            const output = outputs[0];
+            
+            if (input.length > 0 && output.length > 0) {
+              // Copy input to output
+              for (let channel = 0; channel < Math.min(input.length, output.length); channel++) {
+                output[channel].set(input[channel]);
+              }
+            }
+            
+            return true; // Keep processor alive
+          }
+        }
+
+        registerProcessor('emotion-analyzer-processor', EmotionAnalyzerProcessor);
+      `;
+
+      // Create blob URL for the processor
+      const blob = new Blob([processorCode], { type: 'application/javascript' });
+      const processorUrl = URL.createObjectURL(blob);
+
+      // Add the processor module
+      await this.audioContext.audioWorklet.addModule(processorUrl);
+      
+      // Create the worklet node
+      this.workletNode = new AudioWorkletNode(this.audioContext, 'emotion-analyzer-processor');
+      
+      // Connect: source → analyser → workletNode → destination
+      source.connect(this.analyser);
+      this.analyser.connect(this.workletNode);
+      this.workletNode.connect(this.audioContext.destination);
+      
+      console.log('✅ AudioWorklet processor initialized for emotion analysis');
+      
+      // Clean up blob URL
+      URL.revokeObjectURL(processorUrl);
+
+    } catch (error) {
+      console.error('❌ Error setting up AudioWorklet:', error);
+      // Fallback: just connect source to analyser
+      source.connect(this.analyser);
     }
   }
 
@@ -546,9 +607,10 @@ Respond with JSON only:
   cleanup() {
     this.stopListening();
     
-    if (this.scriptProcessor) {
-      this.scriptProcessor.disconnect();
-      this.scriptProcessor = null;
+    // ✅ FIXED: Cleanup AudioWorklet node instead of ScriptProcessor
+    if (this.workletNode) {
+      this.workletNode.disconnect();
+      this.workletNode = null;
     }
     
     if (this.analyser) {
@@ -561,8 +623,6 @@ Respond with JSON only:
       this.audioContext = null;
     }
     
-    console.log('🧹 Analyzer cleaned up');
+    console.log('🧹 Analyzer cleaned up (AudioWorklet)');
   }
 }
-
-export default EnhancedAIEmotionAnalyzerRemote;
