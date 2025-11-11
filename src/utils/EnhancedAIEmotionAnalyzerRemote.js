@@ -626,3 +626,6 @@ Respond with JSON only:
     console.log('🧹 Analyzer cleaned up (AudioWorklet)');
   }
 }
+
+export default EnhancedAIEmotionAnalyzerRemote;
+
