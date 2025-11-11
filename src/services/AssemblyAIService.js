@@ -467,6 +467,13 @@ class AssemblyAIService {
   }
 
   /**
+   * ✅ ADDED: Alias for backward compatibility
+   */
+  stopRealtimeTranscription() {
+    this.stop();
+  }
+
+  /**
    * Get all transcription messages
    */
   getMessages() {
