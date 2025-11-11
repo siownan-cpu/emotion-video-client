@@ -1246,8 +1246,16 @@ const EmotionVideoCallWithWebRTC = () => {
     if (assemblyAIRef.current && assemblyConnected) {
       try {
         console.log('📊 Collecting analytics...');
-        assemblyAIRef.current.stopRealtimeTranscription();
-        analytics = assemblyAIRef.current.getConversationAnalytics();
+        
+        // ✅ FIXED: Stop transcription with correct method
+        if (typeof assemblyAIRef.current.stop === 'function') {
+          assemblyAIRef.current.stop();
+        } else if (typeof assemblyAIRef.current.stopRealtimeTranscription === 'function') {
+          assemblyAIRef.current.stopRealtimeTranscription();
+        }
+        
+        // ✅ FIXED: Get conversation data with correct method name
+        analytics = assemblyAIRef.current.getConversationData?.() || null;
         
         // Add call duration to analytics
         if (analytics) {
@@ -1257,8 +1265,8 @@ const EmotionVideoCallWithWebRTC = () => {
         
         setConversationData(analytics);
         console.log('✅ Analytics retrieved:', {
-          messages: analytics.messages?.length || 0,
-          sentimentAvg: analytics.sentiment?.averageSentiment || 0,
+          messages: analytics?.totalMessages || 0,
+          sentiment: analytics?.overallSentiment || 'neutral',
           duration: callDuration,
           patientId: patientId || 'none'
         });
@@ -1574,20 +1582,33 @@ const initializeAssemblyAI = async () => {
       console.log('💬 Transcript:', message.text);
     });
 
-    service.onSentiment((sentiment) => {
-      console.log('😊 Sentiment:', sentiment.suggested, sentiment.polarity.score);
+    service.onSentiment((sentimentData) => {
+      console.log('🎭 Sentiment:', sentimentData.sentiment, '| Score:', sentimentData.score);
       
-      if (sentiment.distress) {
+      // ✅ FIXED: Properly format the sentiment object
+      const formattedSentiment = {
+        score: sentimentData.score || 0,
+        sentiment: sentimentData.sentiment || 'neutral',
+        text: sentimentData.text || '',
+        hasDistress: sentimentData.hasDistress || false,
+        distressLevel: sentimentData.distressLevel || 0,
+        timestamp: sentimentData.timestamp || Date.now()
+      };
+      
+      setSpeechSentiment(formattedSentiment);
+      
+      // Alert on distress
+      if (sentimentData.hasDistress && sentimentData.distressLevel > 0) {
         console.warn('⚠️ Distress detected!');
-        addAlert('Distress indicators detected', 'warning');
+        addAlert(`⚠️ Distress detected: ${sentimentData.distressLevel} keywords`, 'warning');
       }
 
       setRealtimeInsights(prev => [...prev.slice(-9), {
         type: 'sentiment',
-        text: sentiment.text,
-        sentiment: sentiment.suggested,
-        score: sentiment.polarity.score,
-        distress: sentiment.distress,
+        text: sentimentData.text,
+        sentiment: sentimentData.sentiment,
+        score: sentimentData.score,
+        distress: sentimentData.hasDistress,
         timestamp: Date.now(),
       }]);
     });
